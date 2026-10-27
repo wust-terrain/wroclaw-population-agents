@@ -1,0 +1,14 @@
+# środowisko
+.venv/
+__pycache__/
+*.egg-info/
+.ipynb_checkpoints/
+
+# dane i wyniki (duże albo do odtworzenia)
+data/*
+!data/.gitkeep
+wyniki/
+
+# pliki systemowe
+*:Zone.Identifier
+.DS_Store
