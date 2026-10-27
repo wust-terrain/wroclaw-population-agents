@@ -24,7 +24,16 @@ pip install -r requirements.txt && nbstripout --install
 
 ## Dane
 
-Ortofotomapa skośna z [geoportal.gov.pl](https://www.geoportal.gov.pl), arkusz 6.148.12.04.2: pliki `*_N.tif`, `*_E.tif`, `*_S.tif`, `*_W.tif` wrzuć do `data/` bez zmiany nazw. Obrysy budynków z OSM pobierają się same. Dane nie trafiają do gita.
+Notatnik potrzebuje czterech plików ortofotomapy skośnej z [geoportal.gov.pl](https://www.geoportal.gov.pl) (nalot 2025, arkusz 6.148.12.04.2, okolice pl. Grunwaldzkiego, ok. 80 MB każdy). Wrzuć je do `data/` bez zmiany nazw:
+
+```
+84055_1599419_6.148.12.04.2_N.tif
+84055_1598619_6.148.12.04.2_E.tif
+84055_1600219_6.148.12.04.2_S.tif
+84055_1601019_6.148.12.04.2_W.tif
+```
+
+Bez któregoś kierunku notatnik też zadziała, tylko ten widok będzie pusty. Obrysy budynków z OSM pobierają się same. Dane nie trafiają do gita.
 
 ## Użycie
 
