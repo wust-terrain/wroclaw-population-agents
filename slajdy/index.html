@@ -1,0 +1,412 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Populacja w budynkach Wrocławia: system agentowy</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,800&family=Hanken+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+/* === THEME TOKENS === */
+:root {
+    --stage-bg: #10151f;
+    --slide-bg: #f3eee3;      /* papier */
+    --ink: #1b2a41;
+    --ink-soft: #5b6678;
+    --blue: #2a78d6;
+    --orange: #eb6834;
+    --green: #1baf7a;
+    --violet: #6250d6;
+    --card: #fffdf8;
+    --line: #d9d1bf;
+    --serif: 'Fraunces', Georgia, serif;
+    --sans: 'Hanken Grotesk', 'Segoe UI', sans-serif;
+    --mono: 'JetBrains Mono', monospace;
+}
+
+/* === FIXED 16:9 STAGE: MANDATORY BASE STYLES === */
+html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: var(--stage-bg, #000); }
+.deck-viewport { position: fixed; inset: 0; overflow: hidden; background: var(--stage-bg, #000); }
+.deck-stage { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; overflow: hidden; transform-origin: 0 0; background: var(--slide-bg, #fff); }
+.slide { position: absolute; inset: 0; width: 1920px; height: 1080px; overflow: hidden; display: block; visibility: hidden; opacity: 0; pointer-events: none; background: var(--slide-bg, #fff); }
+.slide.active, .slide.visible { visibility: visible; opacity: 1; pointer-events: auto; z-index: 1; }
+img, video, canvas, svg { max-width: 100%; max-height: 100%; }
+.deck-controls { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); z-index: 1000; }
+@media print {
+    html, body { width: 1920px; height: auto; overflow: visible; background: #fff; }
+    .deck-viewport { position: static; overflow: visible; background: #fff; }
+    .deck-stage { position: static; width: auto; height: auto; transform: none !important; background: none; }
+    .slide { position: relative; display: block !important; visibility: visible !important; opacity: 1 !important; pointer-events: auto !important; width: 1920px; height: 1080px; break-after: page; page-break-after: always; }
+    .slide:last-child { break-after: auto; page-break-after: auto; }
+    .deck-controls { display: none !important; }
+}
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.2s !important; }
+}
+
+/* === SLIDE ANATOMY === */
+.slide { font-family: var(--sans); color: var(--ink); }
+.slide::before { /* siatka kartograficzna */
+    content: ""; position: absolute; inset: 0; pointer-events: none;
+    background-image: linear-gradient(var(--line) 1px, transparent 1px), linear-gradient(90deg, var(--line) 1px, transparent 1px);
+    background-size: 120px 120px; opacity: .35;
+}
+.pad { position: absolute; inset: 0; padding: 88px 120px 96px; display: flex; flex-direction: column; }
+.kicker { font-family: var(--mono); font-size: 24px; letter-spacing: .14em; text-transform: uppercase; color: var(--orange); font-weight: 700; }
+h1, h2 { font-family: var(--serif); margin: 0; font-weight: 800; letter-spacing: -.02em; line-height: 1.05; }
+h2 { font-size: 78px; margin-top: 14px; }
+.lead { font-size: 38px; line-height: 1.35; color: var(--ink-soft); max-width: 1400px; margin: 24px 0 0; }
+.foot { position: absolute; left: 120px; right: 120px; bottom: 36px; display: flex; justify-content: space-between; font-family: var(--mono); font-size: 20px; color: var(--ink-soft); }
+.fig { background: var(--card); border: 2px solid var(--ink); border-radius: 18px; padding: 18px; box-shadow: 10px 10px 0 var(--ink); display: flex; }
+.fig img { display: block; width: 100%; height: auto; max-height: none; border-radius: 8px; }
+.cap { font-size: 30px; color: var(--ink-soft); margin-top: 28px; line-height: 1.35; }
+.cap b { color: var(--ink); }
+.tag { display: inline-block; font-family: var(--mono); font-size: 22px; padding: 6px 16px; border-radius: 99px; background: var(--ink); color: var(--slide-bg); }
+.card { background: var(--card); border: 2px solid var(--ink); border-radius: 18px; padding: 34px 38px; box-shadow: 8px 8px 0 var(--ink); }
+.card h3 { font-family: var(--serif); font-size: 44px; margin: 0 0 14px; }
+.card p { font-size: 30px; line-height: 1.35; margin: 0; color: var(--ink-soft); }
+
+/* === REVEAL ANIMATION === */
+.reveal { opacity: 0; transform: translateY(26px); transition: opacity .7s ease, transform .7s cubic-bezier(.2,.7,.2,1); }
+.slide.active .reveal { opacity: 1; transform: none; }
+.slide.active .d1 { transition-delay: .12s } .slide.active .d2 { transition-delay: .26s }
+.slide.active .d3 { transition-delay: .4s } .slide.active .d4 { transition-delay: .54s } .slide.active .d5 { transition-delay: .68s }
+
+/* === PER-SLIDE LAYOUTS === */
+.title-slide .pad { justify-content: center; }
+.title-slide h1 { font-size: 124px; max-width: 1130px; }
+.title-slide h1 em { font-style: italic; color: var(--orange); font-weight: 600; }
+.title-slide .sub { font-size: 40px; color: var(--ink-soft); margin-top: 36px; max-width: 1130px; line-height: 1.35; }
+.title-slide .meta { margin-top: 70px; font-family: var(--mono); font-size: 26px; color: var(--ink); }
+.dots { position: absolute; right: 120px; top: 150px; width: 520px; height: 520px; }
+
+.bignums { display: flex; gap: 60px; margin-top: 70px; align-items: stretch; }
+.bn { flex: 1; }
+.bn .n { font-family: var(--serif); font-weight: 800; font-size: 190px; line-height: 1; letter-spacing: -.04em; }
+.bn .u { font-size: 34px; color: var(--ink-soft); margin-top: 10px; line-height: 1.3; }
+.bn.a .n { color: var(--blue); } .bn.b .n { color: var(--orange); }
+.vs { align-self: center; font-family: var(--mono); font-size: 36px; color: var(--ink-soft); }
+.gapline { margin-top: 60px; font-size: 40px; line-height: 1.35; max-width: 1500px; }
+.gapline b { background: linear-gradient(transparent 62%, rgba(235,104,52,.35) 62%); }
+
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 56px; margin-top: 56px; }
+.hyp .id { font-family: var(--mono); font-weight: 700; font-size: 34px; color: var(--orange); }
+
+.grid-sa { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; margin-top: 44px; }
+.list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 26px; }
+.list li { display: grid; grid-template-columns: 100px 1fr; gap: 22px; align-items: start; font-size: 36px; line-height: 1.3; }
+.list li span.k { font-family: var(--mono); font-weight: 700; color: #fff; background: var(--blue); border-radius: 10px; text-align: center; padding: 6px 0; font-size: 34px; }
+.list.l li span.k { background: var(--violet); }
+.list li span.k.base { background: var(--ink); }
+.sa-title { font-family: var(--mono); font-size: 26px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-soft); margin-bottom: 18px; }
+
+.row { display: grid; gap: 56px; align-items: center; margin-top: 36px; }
+.row.fig-wide { grid-template-columns: 1fr; }
+
+.req { display: grid; grid-template-columns: 1fr 1fr; gap: 22px 56px; margin-top: 56px; }
+.req div { display: grid; grid-template-columns: 56px 1fr; gap: 16px; align-items: start; font-size: 36px; line-height: 1.3; padding: 24px 0; border-bottom: 2px solid var(--line); }
+.req .ok { width: 44px; height: 44px; border-radius: 50%; background: var(--green); color: #fff; display: grid; place-items: center; font-weight: 700; font-size: 26px; }
+.req small { display: block; color: var(--ink-soft); font-size: 28px; margin-top: 4px; }
+
+/* === LITERATURE SLIDE === */
+.status { display: inline-block; margin-left: 22px; vertical-align: middle; font-family: var(--mono); font-size: 24px; font-weight: 700; color: var(--ink); background: #f6d34a; border: 2px solid var(--ink); border-radius: 99px; padding: 6px 20px; letter-spacing: .06em; }
+.lit { display: grid; grid-template-columns: 1fr 1fr; gap: 40px 56px; margin-top: 28px; }
+.lit h4 { margin: 0 0 14px; font-family: var(--mono); font-size: 24px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-soft); }
+.lit .it { padding: 8px 0 8px 22px; border-left: 6px solid var(--blue); margin-bottom: 14px; font-size: 26px; line-height: 1.28; }
+.lit .it.o { border-color: var(--orange); } .lit .it.v { border-color: var(--violet); }
+.lit .it b { display: block; font-family: var(--serif); font-size: 29px; margin-bottom: 2px; }
+.lit-gap { margin-top: 14px; font-size: 28px; color: var(--ink-soft); }
+.lit-gap b { color: var(--ink); }
+
+.progress { position: fixed; left: 0; bottom: 0; height: 6px; background: var(--orange); width: 0; transition: width .35s ease; z-index: 1001; }
+</style>
+</head>
+<body>
+<div class="deck-viewport" id="viewport">
+<div class="deck-stage" id="stage">
+
+<!-- ================= 1. TYTUŁ ================= -->
+<section class="slide title-slide active">
+    <svg class="dots reveal d3" viewBox="0 0 520 520" aria-hidden="true">
+        <g fill="none" stroke="#1b2a41" stroke-width="3">
+            <rect x="30" y="300" width="130" height="190" fill="#2a78d6"/>
+            <rect x="180" y="200" width="110" height="290" fill="#eb6834"/>
+            <rect x="310" y="260" width="170" height="230" fill="#1baf7a"/>
+            <rect x="60" y="120" width="90" height="150" fill="#eda100"/>
+            <rect x="320" y="90" width="120" height="150" fill="#e87ba4"/>
+        </g>
+        <g fill="#1b2a41">
+            <circle cx="95" cy="355" r="7"/><circle cx="125" cy="395" r="7"/><circle cx="235" cy="270" r="7"/>
+            <circle cx="235" cy="330" r="7"/><circle cx="395" cy="340" r="7"/><circle cx="430" cy="410" r="7"/>
+        </g>
+    </svg>
+    <div class="pad">
+        <div class="kicker reveal">Systemy agentowe · projekt badawczy</div>
+        <h1 class="reveal d1" style="margin-top:28px">Ilu ludzi mieszka <em>w tym budynku?</em></h1>
+        <p class="sub reveal d2">Agentowy system LLM, który rozdziela populację Wrocławia na pojedyncze budynki i zasila nią modele ruchu.</p>
+        <div class="meta reveal d4">Wrocław · ortofotomapa ukośna 5 cm/px · BDOT10k · GUS NSP 2021</div>
+    </div>
+</section>
+
+<!-- ================= 2. PROBLEM ================= -->
+<section class="slide">
+    <div class="pad">
+        <div class="kicker reveal">Problem</div>
+        <h2 class="reveal d1">Nawet liczby mieszkańców miasta nikt nie zna</h2>
+        <div class="bignums">
+            <div class="bn a reveal d2"><div class="n">600–675 tys.</div><div class="u">KBR: dane administracyjne</div></div>
+            <div class="vs reveal d2">vs</div>
+            <div class="bn b reveal d3"><div class="n">893,5 tys.</div><div class="u">ekspertyzy miejskie</div></div>
+        </div>
+        <div class="gapline reveal d4">Różnica to <b>ok. 220–290 tys. osób</b>. Do tego dane publiczne są zagregowane w skali makro. <b>Dla pojedynczego budynku nie ma żadnej liczby.</b></div>
+    </div>
+    <div class="foot"><span>Problem</span><span>2</span></div>
+</section>
+
+<!-- ================= 3. PO CO ================= -->
+<section class="slide">
+    <div class="pad">
+        <div class="kicker reveal">Cel wdrożeniowy</div>
+        <h2 class="reveal d1">Źródła podróży potrzebują adresu, nie dzielnicy</h2>
+        <div class="two">
+            <div class="card reveal d2"><h3>Dla modeli ruchu</h3><p>Dokładny rozkład źródeł podróży: z okręgu schodzimy do konkretnego budynku.</p></div>
+            <div class="card reveal d3"><h3>Dla dyskusji o mieście</h3><p>Narzędzie demonstracyjne, które pokazuje realne zaludnienie, bez arbitralnego strojenia pod niepewne dane twarde.</p></div>
+        </div>
+        <p class="lead reveal d4" style="margin-top:56px">Rozkład ma być <b style="color:var(--ink)">stabilny, tani i oceniony ilościowo</b>. Dlatego traktujemy go jako eksperyment, a nie gotowy produkt.</p>
+    </div>
+    <div class="foot"><span>Problem</span><span>3</span></div>
+</section>
+
+<!-- ================= 4. PYTANIE BADAWCZE ================= -->
+<section class="slide">
+    <div class="pad">
+        <div class="kicker reveal">Pytanie badawcze</div>
+        <h2 class="reveal d1" style="font-size:66px;max-width:1600px">Jak źródło danych (S) i poziom architektury agentowej (A) wpływają na jakość, stabilność i koszt rozkładu?</h2>
+        <div class="two" style="margin-top:60px">
+            <div class="card hyp reveal d2"><div class="id">H1 · obraz</div><h3>Obrazy poprawiają trafność</h3><p>Ortofotomapy pionowe i ukośne poprawiają rozkład w porównaniu z danymi nieobrazowymi, zwłaszcza dla zabudowy jednorodzinnej, budynków mieszanych i akademików.</p></div>
+            <div class="card hyp reveal d3"><div class="id">H2 · architektura</div><h3>Reguły i bilansowanie stabilizują</h3><p>Reguły na poziomie rejonu i agentowa iteracja bilansująca poprawiają stabilność i jakość w porównaniu z pojedynczym wywołaniem modelu.</p></div>
+        </div>
+    </div>
+    <div class="foot"><span>Hipotezy</span><span>4</span></div>
+</section>
+
+<!-- ================= 5. S × A ================= -->
+<section class="slide">
+    <div class="pad">
+        <div class="kicker reveal">Projekt eksperymentu</div>
+        <h2 class="reveal d1">Dwie zmienne, jeden baseline: siatka S × A</h2>
+        <div class="grid-sa">
+            <div class="card reveal d2">
+                <div class="sa-title">Źródła informacji S</div>
+                <ul class="list">
+                    <li><span class="k">S0</span>GIS: BDOT10k, OSM, powierzchnia, wysokość z NMPT</li>
+                    <li><span class="k">S1</span>S0 + wycinki ortofotomapy pionowej</li>
+                    <li><span class="k">S2</span>S1 + widoki ukośne N / E / S / W</li>
+                    <li><span class="k">S3</span>S2 + większy region otaczający</li>
+                </ul>
+            </div>
+            <div class="card reveal d3">
+                <div class="sa-title">Architektura agentowa A</div>
+                <ul class="list l">
+                    <li><span class="k base">L0</span>baseline: wysokość × powierzchnia × współczynnik</li>
+                    <li><span class="k">L1</span>wielomodalna obserwacja pojedynczego budynku</li>
+                    <li><span class="k">L2</span>reguły klasyfikacji dla całego rejonu</li>
+                    <li><span class="k">L3</span>2–3 rundy bilansowania sumy mieszkańców</li>
+                </ul>
+            </div>
+        </div>
+        <p class="cap reveal d4">Każdy poziom dokłada <b>dokładnie jeden element</b>, więc różnice wyników można przypisać przyczynowo.</p>
+    </div>
+    <div class="foot"><span>Metoda</span><span>5</span></div>
+</section>
+
+<!-- ================= 6. DANE (proof of concept) ================= -->
+<section class="slide">
+    <div class="pad">
+        <div class="kicker reveal">Proof of concept · dane</div>
+        <h2 class="reveal d1" style="font-size:64px">Dane już działają: 341 budynków, jeden arkusz</h2>
+        <div class="fig reveal d2" style="margin-top:30px;align-self:center;width:1320px"><img src="img/cell3.jpg" alt="Budynki z BDOT10k i pokrycie danych"></div>
+        <p class="cap reveal d3" style="margin-top:22px">Okolice pl. Grunwaldzkiego, 800 × 500 m. BDOT10k daje obrys, funkcję i kondygnacje, OSM dokłada adres i wysokość.</p>
+    </div>
+    <div class="foot"><span>Proof of concept</span><span>6</span></div>
+</section>
+
+<!-- ================= 7. KARTA BUDYNKU ================= -->
+<section class="slide">
+    <div class="pad">
+        <div class="kicker reveal">Proof of concept · obserwacja</div>
+        <h2 class="reveal d1" style="font-size:64px">Model dostaje „kartę budynku”: 4 widoki i fasady</h2>
+        <div class="fig reveal d2" style="margin-top:30px;align-self:center;width:1300px"><img src="img/cell7.jpg" alt="Karta budynku: widoki N/E/S/W, fasady, rekord BDOT10k"></div>
+        <p class="cap reveal d3" style="margin-top:22px">Kamienica przy Piastowskiej 36. Obrazy z ortofotomapy ukośnej plus rekord BDOT10k jako tekst. To jest warunek <b>S2</b>, a dzięki obrazom H1 da się sprawdzić na realnych danych.</p>
+    </div>
+    <div class="foot"><span>Proof of concept</span><span>7</span></div>
+</section>
+
+<!-- ================= 8. ARCHITEKTURA ================= -->
+<section class="slide">
+    <div class="pad">
+        <div class="kicker reveal">Architektura agentowa</div>
+        <h2 class="reveal d1" style="font-size:64px">Świadkowie opisują, wzór liczy, agenci uzgadniają</h2>
+        <div class="fig reveal d2" style="margin-top:30px;align-self:center;width:1200px"><img src="img/cell9.jpg" alt="Diagram architektury systemu"></div>
+        <p class="cap reveal d3" style="margin-top:22px">Model nie zgaduje liczby mieszkańców: opisuje budynek (VLM), a <b>liczbę liczy estymator ze wzoru</b>. Agenci rozmawiają tylko w pętli uzgadniania z sumami NSP 2021. Woda MPWiK służy wyłącznie do oceny.</p>
+    </div>
+    <div class="foot"><span>Metoda</span><span>8</span></div>
+</section>
+
+<!-- ================= 9. ABLACJE ================= -->
+<section class="slide">
+    <div class="pad">
+        <div class="kicker reveal">Ablacje</div>
+        <h2 class="reveal d1" style="font-size:64px">Każda konfiguracja zmienia jedną rzecz</h2>
+        <div class="fig reveal d2" style="margin-top:30px;align-self:center;width:1560px"><img src="img/cell13.jpg" alt="Macierz konfiguracji ablacyjnych"></div>
+        <p class="cap reveal d3" style="margin-top:22px">Dziesięć konfiguracji na tej samej próbce: baseline’y, S0 vs S2, bez fasad, bez tabeli BDOT, <b>obraz placebo</b> i sonda pamięci. Placebo odróżni „model patrzy na budynek” od „model dostał jakikolwiek obraz”.</p>
+    </div>
+    <div class="foot"><span>Eksperyment</span><span>9</span></div>
+</section>
+
+<!-- ================= 10. KOSZT ================= -->
+<section class="slide">
+    <div class="pad">
+        <div class="kicker reveal">Koszt · szacunek na sucho</div>
+        <h2 class="reveal d1" style="font-size:64px">Cały arkusz kosztuje rzędu 15 USD</h2>
+        <div class="fig reveal d2" style="margin-top:30px;align-self:center;width:1400px"><img src="img/cell15.jpg" alt="Szacowany koszt na budynek"></div>
+        <p class="cap reveal d3" style="margin-top:22px">3–4 ¢ na budynek, 40 budynków ≈ 1,3–1,7 USD na konfigurację. <b>To szacunek z liczby tokenów</b> (Claude Opus 5.5), bez wołania modelu. Ablacje na pilotażowej próbce są tanie i powtarzalne.</p>
+    </div>
+    <div class="foot"><span>Eksperyment</span><span>10</span></div>
+</section>
+
+<!-- ================= 11. BASELINE ================= -->
+<section class="slide">
+    <div class="pad">
+        <div class="kicker reveal">Baseline</div>
+        <h2 class="reveal d1" style="font-size:64px">Punkt odniesienia: objętość bez modelu</h2>
+        <div class="fig reveal d2" style="margin-top:30px;align-self:center;width:1040px"><img src="img/cell17.jpg" alt="Rozkład populacji z objętości BDOT10k"></div>
+        <p class="cap reveal d3" style="margin-top:22px">Objętość budynków uznanych przez BDOT10k za mieszkalne i eksploatowane. Udział budynku to jego część sumy arkusza przy stałej gęstości. Do tej mapy porównujemy każdy wariant z modelem.</p>
+    </div>
+    <div class="foot"><span>Baseline</span><span>11</span></div>
+</section>
+
+<!-- ================= 12. OCENA ================= -->
+<section class="slide">
+    <div class="pad">
+        <div class="kicker reveal">Ocena</div>
+        <h2 class="reveal d1">Trzy wymiary: jakość, stabilność, koszt</h2>
+        <div class="two" style="grid-template-columns:repeat(3,1fr);gap:40px">
+            <div class="card reveal d2"><h3 style="color:var(--blue)">Jakość</h3><p>Korelacja Spearmana z danymi MPWiK. F1 klasyfikacji budynku (mieszkalny / mieszany / niemieszkalny) na 150 obiektach. Pilotaż na 40 budynkach.</p></div>
+            <div class="card reveal d3"><h3 style="color:var(--orange)">Stabilność</h3><p>Wariancja kolejnych powtórzeń tej samej konfiguracji.</p></div>
+            <div class="card reveal d4"><h3 style="color:var(--green)">Koszt</h3><p>Koszt API w dolarach, liczba tokenów, czas odpowiedzi, liczba kroków i wywołań.</p></div>
+        </div>
+        <p class="cap reveal d5" style="max-width:1560px">Woda z MPWiK na poziomie klatki schodowej (dane niepubliczne) jest <b>tylko do oceny</b>, więc system nie może się do niej dostroić. Sumy NSP 2021 są wejściem pętli bilansującej, a nie miarą jakości.</p>
+    </div>
+    <div class="foot"><span>Ewaluacja</span><span>12</span></div>
+</section>
+
+<!-- ================= 13. DLACZEGO KURS ================= -->
+<section class="slide">
+    <div class="pad">
+        <div class="kicker reveal">Dopasowanie do kursu</div>
+        <h2 class="reveal d1" style="font-size:68px">Dlaczego to dobry projekt badawczy</h2>
+        <div class="req">
+            <div class="reveal d1"><span class="ok">✓</span><span>Co najmniej dwie zmienne<small>źródło danych S × poziom architektury A</small></span></div>
+            <div class="reveal d2"><span class="ok">✓</span><span>Baseline<small>L0: objętość × BDOT10k oraz zwykła objętość V</small></span></div>
+            <div class="reveal d2"><span class="ok">✓</span><span>Ilościowa ocena jakości<small>Spearman, F1, stabilność; zewnętrzna prawda z MPWiK</small></span></div>
+            <div class="reveal d3"><span class="ok">✓</span><span>Koszt i efektywność<small>USD, tokeny, czas, liczba kroków i wywołań</small></span></div>
+            <div class="reveal d3"><span class="ok">✓</span><span>Przyczynowość przez ablacje<small>jedna zmiana na konfigurację, obraz placebo</small></span></div>
+            <div class="reveal d4"><span class="ok">✓</span><span>Minimalna wystarczająca architektura<small>czy L2 i L3 wnoszą więcej niż zyskują kosztem?</small></span></div>
+            <div class="reveal d4"><span class="ok">✓</span><span>Rzeczywisty problem, nie zabawka<small>otwarta dziedzina, brak oczywistej prawdy, praktyczne zastosowanie</small></span></div>
+            <div class="reveal d5"><span class="ok">✓</span><span>Nowy komponent badawczy<small>nie samo użycie gotowego agenta, lecz hipotezy H1 i H2</small></span></div>
+        </div>
+    </div>
+    <div class="foot"><span>Kurs</span><span>13</span></div>
+</section>
+
+<!-- ================= 14. PRZEGLĄD LITERATURY ================= -->
+<section class="slide">
+    <div class="pad">
+        <div class="kicker reveal">Literatura</div>
+        <h2 class="reveal d1" style="font-size:68px">Przegląd literatury <span class="status">W TRAKCIE</span></h2>
+        <div class="lit">
+            <div class="reveal d2">
+                <h4>Populacja i LLM w zadaniach przestrzennych</h4>
+                <div class="it"><b>Pirowski i Bartoś 2018, Pirowski i Szypuła 2024</b>Dasymetria z BDOT10k dla Krakowa: najlepszy wariant 19,2% MAPE. Nasz baseline.</div>
+                <div class="it o"><b>GeoLLM, ICLR 2024</b>LLM zasilony kontekstem z OSM przewiduje gęstość zaludnienia.</div>
+                <div class="it o"><b>MobiVerse, GATSim, Song i in. 2025</b>LLM w symulacji mobilności miejskiej; autorzy zgłaszają brak walidacji.</div>
+                <div class="it o"><b>Zhou i in. 2024, przegląd VLM dla teledetekcji</b>Mapa modeli wizualno-językowych do obrazów lotniczych i satelitarnych.</div>
+            </div>
+            <div class="reveal d3">
+                <h4>VLM i analiza budynków</h4>
+                <div class="it v"><b>Yang i in. 2024</b>Gemini ocenia funkcję i wysokość budynku ze zdjęć ulicznych.</div>
+                <div class="it v"><b>Pan i in., CLIP + SAM</b>Atrybuty budynków ze zdjęć bez uczenia (zero-shot).</div>
+                <div class="it v"><b>OpenFACADES 2025</b>Otwarte VLM opisują budynek i jego atrybuty ze zdjęć ulicznych.</div>
+                <div class="it"><b>Sun i in. 2025, Monachium</b>Liczba kondygnacji ze zdjęć: 97,9% budynków w granicach ±1 piętra.</div>
+            </div>
+        </div>
+        <div class="reveal d4" style="margin-top:6px">
+            <h4 style="margin:0 0 10px;font-family:var(--mono);font-size:24px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-soft)">Iteracyjne uzgadnianie (L3)</h4>
+            <div class="it v" style="padding:8px 0 8px 22px;border-left:6px solid var(--violet);font-size:26px;line-height:1.28"><b style="display:block;font-family:var(--serif);font-size:29px;margin-bottom:2px">Multiagent Debate, Du i in., ICML 2024</b>Kilka rund wzajemnej poprawy odpowiedzi podnosi trafność faktów i rozumowania: wzór dla naszej pętli bilansującej.</div>
+        </div>
+        <p class="lit-gap reveal d4">Dotychczas <b>nie znaleźliśmy pracy z VLM na ortofotomapie ukośnej</b> dla kondygnacji, wysokości i funkcji. Weryfikujemy to dalej.</p>
+    </div>
+    <div class="foot"><span>Literatura</span><span>14</span></div>
+</section>
+
+<!-- ================= 15. OGRANICZENIA I DALEJ ================= -->
+<section class="slide">
+    <div class="pad">
+        <div class="kicker reveal">Ryzyka i plan</div>
+        <h2 class="reveal d1">Co może pójść źle, co robimy dalej</h2>
+        <div class="two">
+            <div class="card reveal d2">
+                <h3>Ryzyka</h3>
+                <p>Dane MPWiK są niepubliczne, więc dostęp trzeba potwierdzić. Pilotaż na 40 budynkach ma małą moc statystyczną. Koszty to na razie szacunek na sucho.</p>
+            </div>
+            <div class="card reveal d3">
+                <h3>Następne kroki</h3>
+                <p>Dokończenie przeglądu literatury. Pierwszy prawdziwy przebieg na 40 budynkach i porównanie z baseline’em. Dane referencyjne (MPWiK, obwody wyborcze). Rubryka skalibrowana na sumach z 2021, potem osiedla oddane po 2021.</p>
+            </div>
+        </div>
+    </div>
+    <div class="foot"><span>Plan</span><span>15</span></div>
+</section>
+
+</div><!-- /stage -->
+</div><!-- /viewport -->
+<div class="progress" id="progress"></div>
+
+<script>
+/* === STAGE SCALING: uniform scale of the 1920x1080 canvas, letterboxed === */
+(function () {
+    const stage = document.getElementById('stage');
+    const slides = Array.from(document.querySelectorAll('.slide'));
+    const bar = document.getElementById('progress');
+    let i = 0;
+
+    function fit() {
+        const s = Math.min(innerWidth / 1920, innerHeight / 1080);
+        const x = (innerWidth - 1920 * s) / 2, y = (innerHeight - 1080 * s) / 2;
+        stage.style.transform = `translate(${x}px, ${y}px) scale(${s})`;
+    }
+    function show(n) {
+        i = Math.max(0, Math.min(slides.length - 1, n));
+        slides.forEach((el, k) => el.classList.toggle('active', k === i));
+        bar.style.width = ((i + 1) / slides.length * 100) + '%';
+        history.replaceState(null, '', '#' + (i + 1));
+    }
+    addEventListener('resize', fit);
+    addEventListener('keydown', e => {
+        if (['ArrowRight', 'ArrowDown', 'PageDown', ' '].includes(e.key)) { e.preventDefault(); show(i + 1); }
+        else if (['ArrowLeft', 'ArrowUp', 'PageUp'].includes(e.key)) { e.preventDefault(); show(i - 1); }
+        else if (e.key === 'Home') show(0);
+        else if (e.key === 'End') show(slides.length - 1);
+    });
+    let tx = 0;
+    addEventListener('touchstart', e => { tx = e.touches[0].clientX; });
+    addEventListener('touchend', e => { const d = e.changedTouches[0].clientX - tx; if (Math.abs(d) > 50) show(i + (d < 0 ? 1 : -1)); });
+    addEventListener('click', e => { show(i + (e.clientX > innerWidth / 2 ? 1 : -1)); });
+    fit();
+    show(parseInt(location.hash.slice(1), 10) - 1 || 0);
+})();
+</script>
+</body>
+</html>
