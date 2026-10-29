@@ -1,0 +1,11 @@
+# Placebo obrazowe: rekord BDOT10k tego budynku, obrazy innego budynku z próbki.
+# Jeśli wynik się nie pogarsza względem swiadek_s2, model nie korzysta z obrazu.
+nazwa = "swiadek_s2_placebo"
+opis = "jak swiadek_s2, ale z obrazami innego budynku"
+estymator = "wzor"
+zrodla = ["tabela", "widoki", "fasady"]
+placebo = true
+
+[budynki]
+liczba = 40
+ziarno = 0

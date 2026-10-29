@@ -1,0 +1,9 @@
+# Sam obraz, bez rekordu BDOT10k. Pokazuje, co model widzi sam; tylko tu zgodność z BDOT nie jest kolista.
+nazwa = "swiadek_s2_bez_tabeli"
+opis = "jak swiadek_s2, ale bez rekordu BDOT10k"
+estymator = "wzor"
+zrodla = ["widoki", "fasady"]
+
+[budynki]
+liczba = 40
+ziarno = 0

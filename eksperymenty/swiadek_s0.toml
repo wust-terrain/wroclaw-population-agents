@@ -1,0 +1,9 @@
+# Świadek bez obrazu: model widzi tylko rekord z BDOT10k. Porównanie z swiadek_s2 mierzy, co wnosi obraz (H1).
+nazwa = "swiadek_s0"
+opis = "świadek z samym rekordem BDOT10k, wzór z rubryką z wiedzy modelu"
+estymator = "wzor"
+zrodla = ["tabela"]
+
+[budynki]
+liczba = 40
+ziarno = 0

@@ -1,0 +1,9 @@
+# Baseline tabelaryczny: objętość budynków, które BDOT10k uznaje za mieszkalne i eksploatowane, 0 dla reszty.
+# To najmocniejszy prosty rywal: świadek wizualny musi go pobić, żeby obraz miał sens (H1).
+nazwa = "objetosc_bdot"
+opis = "objętość × (mieszkalny i eksploatowany według BDOT10k)"
+estymator = "objetosc_bdot"
+
+[budynki]
+liczba = 40
+ziarno = 0

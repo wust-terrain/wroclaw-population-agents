@@ -4,6 +4,7 @@ Każdy plik `*_N.tif`, `*_E.tif`, `*_S.tif`, `*_W.tif` to jeden arkusz widziany 
 Arkusze tego samego kierunku tworzą mozaikę, więc wycinek może przechodzić przez granicę arkuszy.
 """
 
+import atexit
 from pathlib import Path
 
 import numpy as np
@@ -23,6 +24,7 @@ ELEWACJE = {"N": "południowe", "E": "zachodnie", "S": "północne", "W": "wscho
 ARKUSZE = {k: [rasterio.open(p) for p in sorted(DATA.glob(f"*_{k}.tif"))] for k in KIERUNKI}
 ARKUSZE = {k: v for k, v in ARKUSZE.items() if v}
 KOLEJNOSC = list(ARKUSZE)  # kierunki, dla których jest choć jeden arkusz
+atexit.register(lambda: [s.close() for zrodla in ARKUSZE.values() for s in zrodla])  # przed sprzątaniem modułów
 
 
 def zasieg(kier=None):

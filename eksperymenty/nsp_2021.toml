@@ -1,0 +1,10 @@
+# Baseline statystyczny: ludność kwadratu 125 m z NSP 2021 rozdzielona na budynki według powierzchni
+# kondygnacji mieszkalnych z BDOT10k. Mocny dla starej zabudowy; dla osiedli oddanych po 2021 roku
+# z definicji się myli, bo nowi mieszkańcy nie są w sumie z 2021.
+nazwa = "nsp_2021"
+opis = "NSP 2021 (kwadrat 125 m) × udział w powierzchni kondygnacji mieszkalnych"
+estymator = "nsp_2021"
+
+[budynki]
+liczba = 40
+ziarno = 0

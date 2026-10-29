@@ -1,0 +1,9 @@
+# L0: jedno wywołanie VLM, które od razu podaje liczbę mieszkańców. Czy rozbicie na świadka i wzór coś daje?
+nazwa = "wprost_s2"
+opis = "jedno wywołanie: rekord BDOT10k, widoki i fasady -> liczba mieszkańców"
+estymator = "wprost"
+zrodla = ["tabela", "widoki", "fasady"]
+
+[budynki]
+liczba = 40
+ziarno = 0

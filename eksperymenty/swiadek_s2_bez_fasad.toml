@@ -1,0 +1,9 @@
+# Czy deterministyczny preprocessing (wyprostowane fasady) poprawia wynik albo obniża koszt?
+nazwa = "swiadek_s2_bez_fasad"
+opis = "jak swiadek_s2, ale bez fasad"
+estymator = "wzor"
+zrodla = ["tabela", "widoki"]
+
+[budynki]
+liczba = 40
+ziarno = 0

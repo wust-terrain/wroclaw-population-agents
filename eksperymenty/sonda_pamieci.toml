@@ -1,0 +1,10 @@
+# Sonda pamięci: model dostaje tylko adres. Wynik bliski referencji znaczy, że model pamięta dane o budynku.
+nazwa = "sonda_pamieci"
+opis = "jedno wywołanie, tylko adres"
+estymator = "wprost"
+zrodla = ["adres"]
+
+[budynki]
+liczba = 40
+ziarno = 0
+z_adresem = true

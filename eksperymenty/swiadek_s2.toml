@@ -1,0 +1,9 @@
+# Główna konfiguracja: świadek widzi rekord z BDOT10k, widoki z 4 stron i wyprostowane fasady.
+nazwa = "swiadek_s2"
+opis = "świadek z tabelą, widokami i fasadami, wzór z rubryką z wiedzy modelu"
+estymator = "wzor"
+zrodla = ["tabela", "widoki", "fasady"]
+
+[budynki]
+liczba = 40
+ziarno = 0
