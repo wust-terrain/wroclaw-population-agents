@@ -1,15 +1,15 @@
 # wroclaw-population-agents
 
-Szacujemy, ile osób mieszka w każdym budynku we Wrocławiu. Modele ruchu potrzebują jej dla pojedynczych budynków, a spis podaje ludność tylko w kwadratach 125 × 125 m.
+Szacujemy, ile osób mieszka w każdym budynku we Wrocławiu. Zakładamy, że model ruchu będzie dokładniejszy z takim wyliczeniem a spis GUS podaje ludność tylko w kwadratach 125 × 125 m.
 
-Model widzący obrazy (VLM) opisuje budynek ze zdjęć lotniczych, a liczbę mieszkańców liczy z tego zwykły wzór. Drugi model porównuje wyniki ze spisem i dopytuje pierwszego.
+Model widzący obrazy (VLM) opisuje budynek ze zdjęć lotniczych z 4 stron świata, a liczbę mieszkańców liczy z tego wzór. Drugi model porównuje wyniki ze spisem i dopytuje pierwszego.
 
-Działa jeden arkusz ortofotomapy: 800 × 500 m, 341 budynków. Pilot na tanim modelu Claude Haiku pokazał, że kod działa, ale nie to, że szacunki są trafne. Docelowo system ma działać na otwartym modelu, np. Qwen, którego jeszcze nie uruchamialiśmy. Pełne prompty: `docs/architektura.md`, stan prac: `paper/population-estimation.tex`, wykresy: `notebooks/`.
+Działamy na jednym arkuszu ortofotomapy: 800 × 500 m, 341 budynków. Pilot na tanim modelu Claude Haiku pokazał, że kod działa, ale nie to, że szacunki są trafne. Docelowo system ma działać na otwartym modelu, np. Qwen, który uruchomimy jak będziemy mieć serwer. Pełne prompty: `docs/architektura.md`, stan prac: `paper/population-estimation.tex`, wykresy: `notebooks/`.
 
 
 ## Instalacja i dane
 
-Python 3.12+: `uv sync` albo `pip install -e .` (wtedy bez `uv run`). Notatniki są w gicie z wynikami komórek, więc nie używaj `nbstripout`.
+Python 3.12+: `uv sync` albo `pip install -e .` (wtedy bez `uv run`).
 
 Pobierz ortofotomapę z [geoportal.gov.pl](https://www.geoportal.gov.pl), BDOT10k z [geoportalu Dolnego Śląska](https://geoportal.dolnyslask.pl/imap/#gpmap=gp103), a `Grid_125_XLS.zip` z [ATOM GRID w GUS](https://geo.stat.gov.pl/atom-web/atom/GRID?spatial_dataset_identifier_code=GRID_2021_125m_xls&spatial_dataset_identifier_namespace=GRID), rozpakuj i ułóż tak, bez zmiany nazw:
 
@@ -40,7 +40,7 @@ uv run python -m agenci.kalibracja  # rubryka z NSP 2021
 uv run pytest
 ```
 
-Wyniki trafiają do `wyniki/eksperymenty/`: `<przebieg>.csv` (jeden wiersz na budynek), `__dialog.csv` (rozmowa agentów), `__bilans.csv` (kwadraty po rundach). Odpowiedzi modeli zostają w `wyniki/eksperymenty.sqlite`, więc powtórka jest darmowa, a zmiana promptu kosztuje. Katalogu `wyniki/` nie ma w gicie.
+Wyniki trafiają do `wyniki/eksperymenty/`: `<przebieg>.csv` (jeden wiersz na budynek), `__dialog.csv` (rozmowa agentów), `__bilans.csv` (kwadraty po rundach). Odpowiedzi modeli zostają w `wyniki/eksperymenty.sqlite`, więc powtórka jest darmowa, chyba że zmieni się prompt. Katalogu `wyniki/` nie ma w gicie.
 
 ## Jak wyglądają dane
 
