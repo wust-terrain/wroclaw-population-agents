@@ -1,8 +1,6 @@
-# Baseline główny: powierzchnia zabudowy × wysokość, bez modelu.
-nazwa = "objetosc"
-opis = "powierzchnia zabudowy × wysokość"
+# Baseline: sama objętość z obrysu i wysokości, bez modelu.
+opis = "objętość"
 estymator = "objetosc"
 
 [budynki]
-liczba = 40
-ziarno = 0
+wszystkie = true

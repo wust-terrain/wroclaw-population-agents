@@ -1,132 +1,114 @@
-"""Ewaluacja przebiegów: koszt, czas, stabilność, zgodność z BDOT10k i proxy (woda, obwody wyborcze).
+"""Ewaluacja przebiegów: zgodność z BDOT10k i sumy w kwadratach NSP 2021.
 
-    python -m agenci.ewaluacja                          # tabela porównawcza wszystkich przebiegów
-    python -m agenci.ewaluacja swiadek_s2 wprost_s2     # tylko wybrane
+    python -m agenci.ewaluacja    # tabela wszystkich przebiegów, które mają wyniki
 
-Dopóki nie mamy danych MPWiK ani obwodów, zewnętrzną kontrolą jest BDOT10k: kondygnacje oraz to,
-czy budynek jest mieszkalny i eksploatowany. To sprawdza świadka, a nie liczbę mieszkańców, i jest
-koliste dla przebiegów, które widzą rekord BDOT w prompcie (źródło "tabela"); uczciwy test to
-przebieg bez tabeli. ocena_per_budynek i ocena_per_obszar czekają na dane referencyjne.
+Dla pojedynczego budynku nie mamy żadnej referencji, więc liczbę mieszkańców oceniamy tylko na kwadratach NSP 2021, w których
+predykcję ma każdy budynek mieszkalny. Kwadraty są jednostką losowania: przedziały to bootstrap kwadratów, przy kilkunastu
+kwadratach przybliżony i raczej za wąski, więc czytamy je jako dolne oszacowanie niepewności, a nie jako test.
+
+BDOT10k kontroluje świadka, a nie liczbę mieszkańców: kondygnacje oraz to, czy budynek jest mieszkalny i eksploatowany.
+Jest to koliste dla przebiegów, które widzą rekord BDOT w prompcie; uczciwy test to przebieg z z_rekordem = false.
 """
 
-import argparse
-import sqlite3
-
-import geopandas as gpd
 import numpy as np
 import pandas as pd
 
-from agenci import BAZA
+from agenci import EKSPERYMENTY, PRZEBIEGI
+from agenci.statystyka import budynki_w_kwadratach, kompletne_kwadraty
+from ortofoto.arkusze import zasieg
 from ortofoto.budynki import wczytaj_budynki
 
-
-def wczytaj_predykcje(baza=BAZA, eksperymenty=None):
-    with sqlite3.connect(baza) as db:
-        pred = pd.read_sql("SELECT * FROM predykcje", db)
-    if "blad" not in pred:
-        pred["blad"] = None
-    return pred[pred.eksperyment.isin(eksperymenty)] if eksperymenty else pred
+BOOTSTRAP = 2000  # liczba losowań do przedziałów
 
 
-def koszty(baza=BAZA):
-    """Koszt nominalny (jak bez pamięci odpowiedzi) i faktycznie zapłacony, z ostatniego przebiegu eksperymentu."""
-    with sqlite3.connect(baza) as db:
-        return pd.read_sql("""SELECT w.eksperyment, COUNT(*) AS wywolania, SUM(w.koszt_usd) AS koszt_usd,
-                              SUM(CASE WHEN w.z_pamieci = 0 THEN w.koszt_usd ELSE 0 END) AS koszt_zaplacony,
-                              SUM(w.tokeny_we) AS tokeny_we, SUM(w.tokeny_wy) AS tokeny_wy
-                              FROM wywolania w JOIN przebiegi p ON w.eksperyment = p.eksperyment AND w.czas >= p.start
-                              GROUP BY w.eksperyment""", db).set_index("eksperyment")
-
-
-def spearman(a, b):
-    """Korelacja rang (Pearson na rangach, remisy uśrednione) na wspólnych indeksach."""
-    a, b = pd.Series(a), pd.Series(b)
-    wspolne = a.index.intersection(b.index)
-    a, b = a[wspolne], b[wspolne]
-    if len(wspolne) < 3 or a.nunique() < 2 or b.nunique() < 2:  # stała seria nie ma rangi
-        return np.nan
-    return a.rank().corr(b.rank())
+def wczytaj(nazwa):
+    """Predykcje przebiegu: jeden wiersz na budynek."""
+    return pd.read_csv(PRZEBIEGI / f"{nazwa}.csv", dtype={"budynek": str})
 
 
 def zgodnosc_z_bdot(pred, bud):
     """Kondygnacje świadka a BDOT10k oraz 'mieszkańcy > 0' a 'mieszkalny i eksploatowany' w BDOT10k."""
-    ref = pd.DataFrame({"kond_bdot": bud.kondygnacje,
-                        "mieszkalny": bud.mieszkalny_bdot & (bud.kategoria == "eksploatowany")})
+    ref = pd.DataFrame({"kond_bdot": bud.kondygnacje, "mieszkalny": bud.mieszkalny_bdot & (bud.kategoria == "eksploatowany")})
     p = pred.join(ref, on="budynek")
     wynik = {}
     if "kondygnacje" in p:
         k = p.dropna(subset=["kondygnacje", "kond_bdot"])
-        wynik |= {"kond_mae": (k.kondygnacje - k.kond_bdot).abs().mean(),
-                  "kond_trafne": (k.kondygnacje == k.kond_bdot).mean()}
+        wynik |= {"kond_mae": (k.kondygnacje - k.kond_bdot).abs().mean(), "kond_trafne": (k.kondygnacje == k.kond_bdot).mean()}
     znane = p.dropna(subset=["mieszkancy"])
-    if len(znane):
-        prawda, przewidziane = znane.mieszkalny.astype(bool), znane.mieszkancy > 0
-        tp = (prawda & przewidziane).sum()
-        wynik |= {"mieszk_trafnosc": (prawda == przewidziane).mean(),
-                  "mieszk_f1": 2 * tp / (prawda.sum() + przewidziane.sum()) if tp else 0.0}
-    return wynik
+    prawda, przewidziane = znane.mieszkalny.astype(bool), znane.mieszkancy > 0
+    tp = (prawda & przewidziane).sum()
+    return wynik | {"mieszk_trafnosc": (prawda == przewidziane).mean(),
+                    "mieszk_f1": 2 * tp / (prawda.sum() + przewidziane.sum()) if tp else 0.0}
 
 
-def stabilnosc(pred):
-    """Przy kilku powtórzeniach: zgodność typu i rozrzut liczby mieszkańców między powtórzeniami."""
-    if pred.powtorzenie.nunique() < 2:
-        return {}
-    wynik = {}
-    if "typ" in pred:
-        wynik["typ_zgodny"] = pred.groupby("budynek").typ.agg(lambda t: t.value_counts(normalize=True).iloc[0]).mean()
-    m = pred.groupby("budynek").mieszkancy
-    wynik["wsp_zmiennosci"] = (m.std() / m.mean()).replace([np.inf, -np.inf], np.nan).mean()
-    return wynik
+def _spearman(a, b):
+    """Korelacja rang z uśrednianiem remisów; stała seria nie ma rangi."""
+    return np.nan if np.ptp(a) == 0 or np.ptp(b) == 0 else np.corrcoef(pd.Series(a).rank(), pd.Series(b).rank())[0, 1]
 
 
-def ocena_per_budynek(pred, referencja):
-    """Spearman predykcji z referencją per budynek (Series indeksowana id budynku, np. zużycie wody)."""
-    s = pred.groupby("budynek").mieszkancy.mean()
-    return {"n": len(s.index.intersection(referencja.index)), "spearman": spearman(s, referencja)}
+def _wape(suma, ref):
+    """WAPE po przeskalowaniu sumy predykcji do sumy referencyjnej (oceniamy rozkład, nie poziom)."""
+    return np.nan if suma.sum() == 0 else float(np.abs(suma * ref.sum() / suma.sum() - ref).sum() / ref.sum())
 
 
-def ocena_per_obszar(pred, bud, obszary, kolumna):
-    """Sumy predykcji w obszarach (np. obwody wyborcze, kwadraty NSP 2021) a liczba referencyjna w kolumnie.
+MIARY = {"spearman": _spearman, "wape": _wape}
 
-    obszary to GeoDataFrame w EPSG:2177. Budynek należy do obszaru, w którym leży jego środek.
-    Ma sens tylko wtedy, gdy predykcje obejmują wszystkie budynki mieszkalne w obszarach.
+
+def przedzial(statystyka, n):
+    """Percentylowy przedział 95% statystyki policzonej na indeksach kwadratów losowanych ze zwracaniem."""
+    rng = np.random.default_rng(0)
+    return tuple(np.nanquantile([statystyka(rng.integers(0, n, n)) for _ in range(BOOTSTRAP)], [0.025, 0.975]))
+
+
+def sumy_kwadratow(pred, bud, kw, kolumna="mieszkancy"):
+    """Suma predykcji i ludność NSP w kwadratach, w których predykcję ma każdy budynek mieszkalny.
+
+    bud i kw jak z budynki_w_kwadratach; budynki niemieszkalne w BDOT10k też się liczą, jeśli świadek dał im mieszkańców.
     """
-    s = pred.groupby("budynek").mieszkancy.mean()
-    punkty = gpd.GeoDataFrame({"mieszkancy": s.values}, geometry=bud.loc[s.index].centroid.values, crs=bud.crs)
-    j = gpd.sjoin(punkty, obszary[[kolumna, "geometry"]], predicate="within")
-    suma = j.groupby("index_right").mieszkancy.sum()
-    ref = obszary.loc[suma.index, kolumna].astype(float)
-    skala = ref.sum() / suma.sum()
-    return {"n_obszarow": len(suma), "spearman": spearman(suma, ref), "iloraz_sum": suma.sum() / ref.sum(),
-            "wape_po_skalowaniu": (suma * skala - ref).abs().sum() / ref.sum()}
+    s = pred.dropna(subset=[kolumna]).set_index("budynek")[kolumna]
+    kody = kompletne_kwadraty(bud, s.index)
+    suma = s.groupby(bud.komorka.reindex(s.index)).sum().reindex(kody).fillna(0.0)
+    return suma, kw.ludnosc.reindex(kody).astype(float)
 
 
-def podsumowanie(baza=BAZA, eksperymenty=None):
-    pred = wczytaj_predykcje(baza, eksperymenty)
+def ocena_kwadratow(pred, bud, kw, kolumna="mieszkancy"):
+    """Spearman i WAPE sum w kwadratach, z przedziałami; z mniej niż trzech kwadratów rangi nic nie mówią."""
+    suma, ref = sumy_kwadratow(pred, bud, kw, kolumna)
+    a, b = suma.to_numpy(float), ref.to_numpy(float)
+    wynik = {"n_kwadratow": len(a)}
+    if len(a) >= 3:
+        for nazwa, f in MIARY.items():
+            lo, hi = przedzial(lambda i, f=f: f(a[i], b[i]), len(a))
+            wynik |= {f"kw_{nazwa}": f(a, b), f"kw_{nazwa}_lo": lo, f"kw_{nazwa}_hi": hi}
+    return wynik
+
+
+def porownaj_sumy(a, b, ref):
+    """Różnica a - b w Spearmanie i WAPE na wspólnych kwadratach, z przedziałami z bootstrapu par kwadratów."""
+    wspolne = a.index.intersection(b.index).intersection(ref.index)
+    x, y, r = a[wspolne].to_numpy(float), b[wspolne].to_numpy(float), ref[wspolne].to_numpy(float)
+    wynik = {"n": len(wspolne)}
+    for nazwa, f in MIARY.items():
+        lo, hi = przedzial(lambda i, f=f: f(x[i], r[i]) - f(y[i], r[i]), len(x))
+        wynik |= {f"d_{nazwa}": f(x, r) - f(y, r), f"d_{nazwa}_lo": lo, f"d_{nazwa}_hi": hi}
+    return wynik
+
+
+def podsumowanie():
+    """Tabela przebiegów z eksperymenty/*.toml, które mają wyniki. Pętlę oceniamy na kwadratach sprzed uzgadniania: po nim byłoby to koło."""
     bud = wczytaj_budynki()
-    koszt = koszty(baza)
-    obj = bud.geometry.area * bud.h  # baseline do porównania rankingów
+    miasto, kw = budynki_w_kwadratach(zasieg())
     wiersze = []
-    for nazwa, p in pred.groupby("eksperyment"):
-        ok = p[p.blad.isna() & p.mieszkancy.notna()]
-        n = p.budynek.nunique()
-        k = koszt.loc[nazwa] if nazwa in koszt.index else pd.Series({"koszt_usd": 0.0, "koszt_zaplacony": 0.0})
-        mieszkancy = ok.groupby("budynek").mieszkancy.mean()
-        wiersze.append({"eksperyment": nazwa, "budynki": n, "bledy": int(p.blad.notna().sum()),
-                        "usd_na_budynek": k.koszt_usd / n, "usd_zaplacone": k.koszt_zaplacony,
-                        "czas_p50": p.czas_s.median(), "czas_p95": p.czas_s.quantile(0.95),
-                        **zgodnosc_z_bdot(ok, bud), "spearman_z_objetoscia": spearman(mieszkancy, obj),
-                        "suma_mieszkancow": mieszkancy.sum(), **stabilnosc(ok)})
-    return pd.DataFrame(wiersze).set_index("eksperyment")
-
-
-def main():
-    parser = argparse.ArgumentParser(description="Porównanie przebiegów eksperymentów.")
-    parser.add_argument("eksperymenty", nargs="*", help="nazwy przebiegów (domyślnie wszystkie)")
-    args = parser.parse_args()
-    with pd.option_context("display.width", 200, "display.max_columns", None):
-        print(podsumowanie(eksperymenty=args.eksperymenty or None).round(3).to_string())
+    for plik in sorted(EKSPERYMENTY.glob("*.toml")):
+        if (PRZEBIEGI / f"{plik.stem}.csv").exists():
+            p = wczytaj(plik.stem)
+            ok = p[p.mieszkancy.notna()]
+            kolumna = "mieszkancy_r0" if "mieszkancy_r0" in p else "mieszkancy"
+            wiersze.append({"przebieg": plik.stem, "budynki": len(p), "bledy": int(p.blad.notna().sum()), "usd": p.get("koszt_usd", pd.Series([0.0])).sum(),
+                            "suma_mieszkancow": ok.mieszkancy.sum(), **zgodnosc_z_bdot(ok, bud), **ocena_kwadratow(ok, miasto, kw, kolumna)})
+    return pd.DataFrame(wiersze).set_index("przebieg")
 
 
 if __name__ == "__main__":
-    main()
+    with pd.option_context("display.width", 200, "display.max_columns", None):
+        print(podsumowanie().round(3).to_string())

@@ -12,3 +12,13 @@ wyniki/
 # pliki systemowe
 *:Zone.Identifier
 .DS_Store
+
+# z artykułu do repozytorium idzie tylko to, co go buduje; PDF składa Overleaf
+paper/*
+!paper/population-estimation.tex
+!paper/acl.sty
+!paper/rysunki/
+
+# tylko lokalnie
+poster/
+docs/strona.md

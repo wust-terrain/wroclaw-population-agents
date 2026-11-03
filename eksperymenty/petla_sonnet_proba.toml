@@ -1,0 +1,11 @@
+# Pokaz rozmowy agentów. Ziarno wybrano celowo tak, żeby trafić kwadrat z dużym rozjazdem, więc to nie jest próbka reprezentatywna.
+# Same obrazy: świadek i agent nie widzą rekordu BDOT10k.
+opis = "pętla, same obrazy, rubryka z kalibracji, Sonnet 5.5, 3 kwadraty"
+estymator = "petla"
+z_rekordem = false
+model = "claude-sonnet-5-5"
+rubryka = "eksperymenty/rubryki/nsp2021_bez_arkusza.toml"
+
+[budynki]
+kwadraty = 3
+ziarno = 14

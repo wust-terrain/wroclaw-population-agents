@@ -1,0 +1,8 @@
+# Rubryka na NSP 2021 bez kwadratów przecinających arkusz (python -m agenci.kalibracja, 2026-11-03).
+# 5590 kwadratów; WAPE na odłożonych blokach 1 km: 0.355 (jedna gęstość: 0.401).
+osoby_na_dom = 3.2123
+
+[gestosci]  # osoby na 100 m² powierzchni kondygnacji
+wielorodzinny_niski = 2.0474
+wielorodzinny_wysoki = 1.3787
+zbiorowy = 0.2194
