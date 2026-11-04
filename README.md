@@ -1,15 +1,14 @@
 # wroclaw-population-agents
 
-Szacujemy, ile osób mieszka w każdym budynku we Wrocławiu. Modele ruchu potrzebują jej dla pojedynczych budynków, a spis podaje ludność tylko w kwadratach 125 × 125 m.
+Szacujemy, ile osób mieszka w każdym budynku we Wrocławiu. Zakładamy, że model ruchu będzie dokładniejszy z takim wyliczeniem a spis GUS podaje ludność tylko w kwadratach 125 × 125 m.
 
-Model widzący obrazy (VLM) opisuje budynek ze zdjęć lotniczych, a liczbę mieszkańców liczy z tego zwykły wzór. Drugi agent, oparty na tym samym modelu, porównuje wyniki ze spisem i dopytuje pierwszego.
+Model widzący obrazy (VLM) opisuje budynek ze zdjęć lotniczych z 4 stron świata, a liczbę mieszkańców liczy z tego wzór. Drugi model porównuje wyniki ze spisem i dopytuje pierwszego.
 
-Działa jeden arkusz ortofotomapy: 800 × 500 m, 341 budynków. Pilot na tanim modelu Claude Haiku pokazał, że kod działa, ale nie to, że szacunki są trafne. Docelowo system ma działać na otwartym modelu, np. Qwen, którego jeszcze nie uruchamialiśmy. Architektura: `docs/architektura.md`, pełne prompty: `src/agenci/`, stan prac i prompty po angielsku: `paper/population-estimation.tex`, wykresy: `notebooks/`.
-
+Działamy na jednym arkuszu ortofotomapy: 800 × 500 m, 341 budynków. Pilot na tanim modelu Claude Haiku pokazał, że kod działa, ale nie to, że szacunki są trafne. Docelowo system ma działać na otwartym modelu, np. Qwen, który uruchomimy jak będziemy mieć serwer. Architektura: `docs/architektura.md`, pełne prompty: `src/agenci/`, stan prac: `paper/population-estimation.tex`, wykresy: `notebooks/`.
 
 ## Instalacja i dane
 
-Python 3.12+: `uv sync` albo `pip install -e .` (wtedy bez `uv run`). Notatniki są w gicie z wynikami komórek, więc nie używaj `nbstripout`.
+Python 3.12+: `uv sync` albo `pip install -e .` (wtedy bez `uv run`).
 
 Pobierz ortofotomapę z [geoportal.gov.pl](https://www.geoportal.gov.pl), BDOT10k z [geoportalu Dolnego Śląska](https://geoportal.dolnyslask.pl/imap/#gpmap=gp103), a `Grid_125_XLS.zip` z [ATOM GRID w GUS](https://geo.stat.gov.pl/atom-web/atom/GRID?spatial_dataset_identifier_code=GRID_2021_125m_xls&spatial_dataset_identifier_namespace=GRID), rozpakuj i ułóż tak, bez zmiany nazw:
 
@@ -40,7 +39,7 @@ uv run python -m agenci.kalibracja  # rubryka z NSP 2021
 uv run pytest
 ```
 
-Wyniki trafiają do `wyniki/eksperymenty/`: `<przebieg>.csv` (jeden wiersz na budynek), `__dialog.csv` (rozmowa agentów), `__bilans.csv` (kwadraty po rundach). Odpowiedzi modeli zostają w `wyniki/eksperymenty.sqlite`, więc powtórka jest darmowa, a zmiana promptu kosztuje. Katalogu `wyniki/` nie ma w gicie.
+Wyniki trafiają do `wyniki/eksperymenty/`: `<przebieg>.csv` (jeden wiersz na budynek), `__dialog.csv` (rozmowa agentów), `__bilans.csv` (kwadraty po rundach). Odpowiedzi modeli zostają w `wyniki/eksperymenty.sqlite`, więc powtórka jest darmowa, chyba że zmieni się prompt. Katalogu `wyniki/` nie ma w gicie.
 
 ## Jak wyglądają dane
 
@@ -49,102 +48,78 @@ Wyniki trafiają do `wyniki/eksperymenty/`: `<przebieg>.csv` (jeden wiersz na bu
 | Ortofotomapa skośna | Cztery pliki TIF: ten sam arkusz sfotografowany pod kątem z czterech stron, piksel 5 cm | obrazy dla modelu |
 | BDOT10k, warstwa `OT_BUBD_A` | Państwowa baza budynków | obrys (stąd powierzchnia), funkcja, kondygnacje, stan |
 | OpenStreetMap | Otwarta mapa, pobiera się sama | wysokość budynku, gdy jest |
-| NSP 2021 | Spis powszechny: liczba osób w każdym zamieszkanym kwadracie | kalibracja, flagi, ocena |
+| NSP 2021 | Spis powszechny: liczba osób w każdym zamieszkanym kwadracie | rubryka, flagi, ocena |
 
 Budynek należy do kwadratu, w którym leży jego środek. Arkusz ucina kwadraty na brzegach, więc ze spisem porównujemy tylko 15 kompletnych, których wszystkie budynki mieszkalne leżą na arkuszu.
 
-Zdjęcia mają współrzędne, więc obrys z BDOT10k wskazuje podstawę budynku, a dach jest przesunięty od kamery o 0,85 × wysokość (z OSM, inaczej 3,3 m na kondygnację + 2 m).
+Zdjęcia mają współrzędne, więc obrys z BDOT10k da się na nie nałożyć. Zdjęcia z góry nie mamy, tylko skośne z 4 stron świata. Model dostaje te 4 zdjęcia i do 4 fasad, czyli wycinków tych samych zdjęć ze ścianą wyprostowaną do prostokąta. 29 budynków przy krawędzi arkusza ma 3 zdjęcia, a 30 nie ma żadnego i dostaje sam rekord.
 
 ## Jeden budynek od początku do końca
 
-Prawdziwy przebieg `arkusz_haiku` dla jednego budynku, środkowego segmentu długiego bloku. Świadek najpierw go nie rozpoznał, kod wykrył sprzeczność z BDOT10k, agent dopytał, a szacunek zmienił się z 0 na 13 osób.
+Prawdziwy przebieg `arkusz_haiku`. Wzór daje 73 osoby, kwadrat nie zgadza się ze spisem, agent dopytuje świadka, świadek potwierdza swój opis i wynik się nie zmienia.
 
-![Schemat blokowy jednego przebiegu: rekord BDOT10k i wycinki ortofotomapy, rozmowy świadka i agenta bilansującego, bilans z NSP 2021 i wzór, który daje 13,37 osoby](docs/przyklad_budynku.png)
+![Schemat blokowy jednego budynku: rekord BDOT10k, 4 zdjęcia z obrysami, odpowiedź świadka, wzór dający 73,28 osoby, porównanie ze spisem, pytanie agenta i druga odpowiedź świadka](docs/przyklad_budynku.png)
 
-Wypowiedzi modeli są dosłowne (tabela `wywolania` w `wyniki/eksperymenty.sqlite`, wiersze 6894, 7428, 7432 i 7435), a wycinki mają te same hashe co w logu. Skrócone są tylko polecenia systemowe; pełne są w `src/agenci/`.
+Odpowiedzi modeli są dosłowne (`wyniki/eksperymenty.sqlite`), polecenia skrócone, a pełne są w `src/agenci/`.
 
-### Co jest deterministyczne
+### Co daje świadek
 
-Model działa tylko w krokach 5, 10, 12 i 15. Świadek ocenia budynek, a agent wybiera, o co zapytać. Całą resztę liczy kod: te same odpowiedzi modeli zawsze dają ten sam wynik, a powtórka przebiegu bierze je z SQLite. Żaden model nie podaje liczby mieszkańców, bo odpowiedź świadka nie ma takiego pola, a agent może tylko zadać pytanie.
+Świadek odpowiada w JSON o stałych polach, więc kod po prostu je czyta. Do wzoru wchodzą trzy z nich:
 
-### Wzór
+| Pole | Co robi we wzorze |
+| --- | --- |
+| `typ` | wybiera gęstość albo daje 0 (`uslugi`, `przemysl`, `garaz`) |
+| `udzial_mieszkalny` | mnoży wynik |
+| `stan` | inny niż `uzytkowany` daje 0 |
+
+Powierzchnia jest zawsze z BDOT10k. Kondygnacje też, a od świadka tylko wtedy, gdy BDOT10k ich nie ma (9 z 341 budynków).
+
+W pilocie świadek niewiele zmienia. Jego klasa budynku zgadza się z BDOT10k w 332 z 341 budynków, udział mieszkalny wynosi od 0,8 do 0,95 w 243 z 248 budynków z szacunkiem powyżej zera, a stan to `uzytkowany` w 339 z 341. Sam BDOT10k z tą samą rubryką, bez modelu, daje Spearmana 0,88 i WAPE 0,17, a ze świadkiem 0,89 i 0,16. Świadek widział rekord, więc mógł go przepisać: w przykładzie sam pisze, że liczbę kondygnacji przyjął z BDOT10k.
+
+### Skąd są liczby
 
 ```text
-dom:         mieszkańcy = osoby_na_dom × udział
-mieszkania:  mieszkańcy = powierzchnia × kondygnacje × udział × gęstość[klasa] / 100
-pozostałe:   mieszkańcy = 0
+dom:         osoby_na_dom × udział
+mieszkania:  powierzchnia × kondygnacje × udział × gęstość / 100
 ```
 
-| Składnik | Skąd | W przykładzie |
+Postać wzoru i klasy budynków są z literatury (Pirowski i Bartos 2018, Pirowski i Szypuła 2024). Liczby w rubryce są nasze: dopasowaliśmy je regresją do spisu. Każdy kwadrat NSP to jedno równanie:
+
+```text
+ludność = a × liczba domów + b × pow. niskich / 100 + c × pow. wysokich / 100 + d × pow. zbiorowych / 100
+```
+
+Powierzchnia to obrys × kondygnacje z BDOT10k. Kwadrat z 24 domami i 72 osobami sugeruje 3 osoby na dom. Regresja robi to samo na wszystkich kwadratach naraz, także mieszanych: dobiera a, b, c, d tak, żeby błąd był jak najmniejszy, a żadna liczba nie wyszła ujemna (NNLS, `kalibracja.py`).
+
+| Liczba | Rubryka (regresja na NSP 2021) | Literatura |
 | --- | --- | --- |
-| powierzchnia | obrys z BDOT10k | 145,1 m² |
-| kondygnacje | BDOT10k; gdy brak, świadek; gdy też brak, wysokość / 3 | 5 |
-| udział mieszkalny | świadek | 0,9 |
-| klasa | typ od świadka i kondygnacje | `blok_prl`, 5 kondygnacji: do 5 kondygnacji |
-| gęstość albo osoby na dom | rubryka | 2,0474 |
+| a: osoby na dom | 3,21 | 2,88 |
+| b: osoby na 100 m², do 5 kondygnacji | 2,05 | 2,70 |
+| c: osoby na 100 m², powyżej 5 kondygnacji | 1,38 | 2,70 |
+| d: osoby na 100 m², zamieszkanie zbiorowe | 0,22 | brak |
 
-`dom_jednorodzinny` i `szeregowiec` liczymy jako dom, `kamienica`, `blok_prl` i `blok_nowy` jako mieszkania, a `zbiorowy` ma własną gęstość. `uslugi`, `przemysl`, `garaz` i `inny` dają 0, tak samo jak stan inny niż `uzytkowany`. Wyjątek: `inny` przy rekordzie mieszkalnym i eksploatowanym dostaje klasę z rekordu. Obraz działa więc na wynik przez typ, udział i stan.
+Literatura to Pirowski i Szypuła 2024: 2,88 osoby na dom i 37,1 m² na osobę w budynkach wielorodzinnych, czyli 2,70 na 100 m². Znamy z tej pracy tylko abstrakt. Pirowski i Bartos (2018) podają dla Krakowa 84 i 37 m² na osobę. Rubrykę może też podać LLM z własnej wiedzy (`rubryka = "llm"`).
 
-Rubryka to cztery liczby z kalibracji na spisie (`kalibracja.py`). Może je też podać agent rubryki, czyli LLM z własnej wiedzy, ale w tym przebiegu nie działał. Tak wygląda jeden wiersz regresji na kwadracie z przykładu, który do dopasowania nie wszedł: 0 domów, 14 561 m² budynków niskich i 2 587 m² wysokich daje 2,0474 × 145,61 + 1,3787 × 25,87 = 334 osoby wobec 486 w spisie.
-
-### Przyjęte liczby
+Pozostałe liczby:
 
 | Liczba | Wartość | Skąd | Do czego |
 | --- | --- | --- | --- |
-| osoby na dom | 3,2123 | kalibracja | wzór |
-| gęstość: wielorodzinny do 5 kondygnacji | 2,0474 na 100 m² | kalibracja | wzór |
-| gęstość: wielorodzinny powyżej 5 | 1,3787 na 100 m² | kalibracja | wzór |
-| gęstość: zbiorowy | 0,2194 na 100 m² | kalibracja | wzór |
-| próg budynku wysokiego | 5 kondygnacji | Pirowski i Bartos 2018 | klasa we wzorze |
-| wysokość bez OSM | 3,3 m × kondygnacje + 2 m, a bez kondygnacji 8 m | założenie | wycinki, baseline objętości |
-| przesunięcie dachu | 0,85 × wysokość | sprawdzone wzrokowo, kamera ok. 40° od pionu | obrys dachu, fasady |
-| obraz dla modelu | do 768 px | limit | karta budynku |
-| flaga kwadratu | ponad 1,5 raza i co najmniej 25 osób | symulacja: przy idealnym świadku 1 flaga na 14 kwadratów | bilans |
-| rundy pętli | 2 | Du i in. 2024 | pętla |
+| wysokość | tag `height` z OSM (45 budynków), inaczej 3,3 m × kondygnacje + 2 m (287), a bez kondygnacji 8 m (9) | OSM, reszta to nasze założenie bez źródła | obrys dachu, fasady, baseline objętości |
+| przesunięcie dachu | 0,85 × wysokość | dobrane na oko spośród 0,70, 0,85 i 1,00 na budynkach z wysokością z OSM (`demo_ortofotomapa_skosna.ipynb`) | obrys dachu, fasady |
+| próg budynku wysokiego | 5 kondygnacji | Pirowski i Bartos 2018, wariant 4 | klasa we wzorze |
+| flaga kwadratu | ponad 1,5 raza i co najmniej 25 osób | nasz próg sprawdzony w symulacji | pętla |
+| rundy | 2 | Du i in. 2024 | pętla |
 | pytania w rundzie | 20 | limit kosztu | pętla |
 
-Udział mieszkalny nie jest przyjętą liczbą, bo podaje go świadek osobno dla każdego budynku.
-
-### Czego ten przykład nie dowodzi
-
-- Nie wiemy, czy 13 osób to prawda, bo dla pojedynczych budynków nie mamy z czym porównać. Stykające się segmenty o podobnej powierzchni świadek od razu opisał jako `blok_prl` i dostały 12,15 oraz 13,31 osoby, więc wynik pasuje do bloku, ale to nie jest dowód.
-- Poziom jest zaniżony: w 15 kwadratach szacunek to 3 974 osoby wobec 5 476 w spisie. Część powodu leży we wzorze, bo gęstości z kalibracji zawierają już przeciętną część niemieszkalną, a wzór mnoży je jeszcze przez udział. Dlatego porównujemy rozkład między kwadratami, a nie sumy.
-- Świadek widział rekord (`z_rekordem = true`), a obie jego odpowiedzi powołują się na BDOT10k. Nie wiemy więc, czy poprawkę wymusił widok S, czy sam rekord.
-- Dobry wniosek nie znaczy dobrego uzasadnienia: „niższe skrzydło” w drugiej odpowiedzi to w rzeczywistości dach tego samego budynku.
+BDOT10k nie podaje wysokości, tylko liczbę kondygnacji. Wysokość i przesunięcie służą do rysowania i wycinania, do wzoru nie wchodzą.
 
 ## Jak działa pętla
 
-Kod sumuje szacunki w kwadratach, skaluje je tak, by suma całego obszaru równała się spisowi, i stawia flagę, gdy kwadrat różni się od spisu ponad 1,5 raza i o co najmniej 25 osób. Ta skala nie zmienia szacunków budynków.
+Pętla rusza, gdy kwadrat ma flagę albo świadek przeczy BDOT10k, np. pisze, że nikt nie mieszka w budynku mieszkalnym. Agent bilansujący nie widzi zdjęć. Czyta opisy takich budynków i wybiera, o co zapytać świadka. Liczb nie zmienia, a jego diagnozy trafiają tylko do zapisu.
 
-Agent bilansujący (LLM, bez zdjęć) dostaje kwadraty z flagą i opisy ich budynków, stawia diagnozę i pisze pytania do świadka. Kod przepuszcza tylko pytania o budynki z kwadratów z flagą albo sprzeczne z rekordem, jedno na budynek w rundzie, bez powtórek, najwyżej 20. Wycina też cyfry, żeby świadek nie poznał liczb ze spisu.
+Filtr w kodzie przepuszcza pytania tylko o te budynki, jedno na budynek w rundzie, bez powtórek, najwyżej 20, i wycina z nich cyfry, żeby świadek nie poznał liczb ze spisu. Świadek odpowiada od nowa i ma zmienić zdanie tylko wtedy, gdy uzasadnia to obraz. Potem wzór liczy wszystko jeszcze raz. Rundy są najwyżej 2.
 
-```mermaid
-sequenceDiagram
-    participant E as eksperyment.py
-    participant R as Agent rubryki (LLM)
-    participant S as Świadek (VLM)
-    participant W as Wzór
-    participant A as Agent bilansujący (LLM)
-    opt bez rubryki z kalibracji
-        E->>R: klasy budynków
-        R-->>E: osoby na dom, gęstości
-    end
-    loop każdy budynek
-        E->>S: zdjęcia, opcjonalnie rekord BDOT10k
-        S-->>E: typ, kondygnacje, udział, stan
-        E->>W: obserwacje, rubryka
-        W-->>E: liczba mieszkańców
-    end
-    loop najwyżej 2 rundy, gdy są flagi albo budynki sprzeczne z rekordem
-        E->>A: kwadraty z flagą i ich budynki
-        A-->>E: diagnozy, pytania
-        E->>S: zdjęcia, poprzednia odpowiedź, pytanie
-        S-->>E: obserwacje, nowe albo te same
-        E->>W: szacunki od nowa
-    end
-```
-
-Świadek ma zmienić odpowiedź tylko wtedy, gdy uzasadnia to obraz. Wynik końcowy to kolumna `mieszkancy`, a stan sprzed pętli to `mieszkancy_r0`.
+W pilocie agent zadał 8 pytań, a filtr przepuścił 7. Zmieniło się 5 odpowiedzi, a suma arkusza wzrosła z 5584 do 5618 osób. Budynek `2881C5D6-81A0` świadek najpierw uznał za usługi (0 osób), a po pytaniu za blok (13 osób). Wynik końcowy to kolumna `mieszkancy`, a stan sprzed pętli to `mieszkancy_r0`.
 
 ## Co sprawdzamy
 
@@ -154,7 +129,8 @@ Sumy w kompletnych kwadratach porównujemy ze spisem. Spearman mówi, czy kolejn
 
 Opis budynku porównujemy z BDOT10k: F1 dla pytania "czy ktoś tu mieszka" i błąd kondygnacji. Ma to sens tylko przy `z_rekordem = false`, bo inaczej model widzi odpowiedź.
 
-Czy spis nie zasila sam siebie? Kalibracja ustala gęstości na ok. 5,6 tys. kwadratów poza arkuszem, więc 15 kwadratów arkusza jest poza próbą. Agent w pętli widział jednak ich sumy, dlatego oceniamy `mieszkancy_r0`, choć wynikiem końcowym jest `mieszkancy`. Czy pętla pomaga, jeszcze nie wiemy: uczciwy test to zgodność z BDOT10k przed pętlą i po niej przy `z_rekordem = false`, a taki przebieg mamy tylko na 25 budynkach.
+Rubrykę dopasowujemy bez kwadratów arkusza, więc 15 kwadratów z oceny jest poza próbą. Agent w pętli widział jednak ich sumy, dlatego oceniamy `mieszkancy_r0`, choć wynikiem końcowym jest `mieszkancy`. Czy pętla pomaga, jeszcze nie wiemy: uczciwy test to zgodność z BDOT10k przed pętlą i po niej przy `z_rekordem = false`, a taki przebieg mamy tylko na 25 budynkach.
 
-Pilot `arkusz_haiku` (rekord widoczny, 15 kwadratów, 0,29 USD): Haiku przed pętlą ma Spearmana 0,89 [0,64; 0,98] i WAPE 0,16, a objętość z BDOT10k 0,85 [0,52; 0,98] i 0,21. Różnica Haiku i objętości to +0,04 [-0,09; +0,23] w Spearmanie i -0,05 [-0,15; +0,04] w WAPE. Oba przedziały obejmują zero, a prawie cały zysk w WAPE to jeden kwadrat z akademikiem, więc przewagi nie mamy. Przed skalowaniem szacunek to 3 974 osoby wobec 5 476 w spisie. Nie wiemy też, czy pomagają obrazy, bo świadka bez obrazów jeszcze nie ma.
+Pilot `arkusz_haiku` (rekord widoczny, 15 kwadratów, 0,29 USD): Haiku przed pętlą ma Spearmana 0,89 [0,64; 0,98] i WAPE 0,16, a objętość z BDOT10k 0,85 [0,52; 0,98] i 0,21. Różnica Haiku i objętości to +0,04 [-0,09; +0,23] w Spearmanie i -0,05 [-0,15; +0,04] w WAPE. Oba przedziały obejmują zero, a prawie cały zysk w WAPE to jeden kwadrat z akademikiem, więc przewagi nie mamy. Nie wiemy też, czy pomagają obrazy, bo świadka bez obrazów jeszcze nie ma.
 
+Przed skalowaniem szacunek to 3 974 osoby wobec 5 476 w spisie. Część tej różnicy bierze się z mnożenia przez udział, bo gęstości z regresji zawierają już część niemieszkalną: z udziałem równym 1 byłoby 4 630 osób.

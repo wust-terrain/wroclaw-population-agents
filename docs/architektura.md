@@ -1,23 +1,23 @@
 # Architektura
 
-**Najważniejsza decyzja: żaden model nie podaje liczby mieszkańców.** VLM opisuje budynek, a liczbę liczy zwykły wzór. Szacunku budynku nie skaluje się do spisu NSP 2021: spis wpływa na wynik tylko przez rubrykę L2 i pytania agenta. Wzór nie potrzebuje sumy kwadratu, więc działa też dla osiedli oddanych po spisie.
+Żaden model nie podaje liczby mieszkańców. VLM opisuje budynek, a liczbę liczy wzór. Szacunku budynku nie skalujemy do spisu NSP 2021, więc spis wpływa na wynik tylko przez rubrykę i pytania agenta. Wzór nie potrzebuje sumy kwadratu, więc działa też dla osiedli oddanych po spisie.
 
 ![Architektura systemu](architektura.png)
 
-Rysunek z artykułu; *Estimator* to na nim wzór, nie pole `estymator` z TOML. Upraszcza trzy rzeczy: pierwsze przejście świadka jest przed opcjonalną pętlą, strzałka agent-świadek biegnie przez filtr w kodzie, a o budynek można pytać też bez flagi.
+Rysunek z artykułu; *Estimator* to na nim wzór, nie pole `estymator` z TOML. Upraszcza trzy rzeczy: pierwsze przejście świadka jest przed opcjonalną pętlą, strzałka agent-świadek biegnie przez filtr w kodzie, a o budynek można pytać też bez flagi. Przykład jednego budynku krok po kroku jest w README.
 
-## Jak wyglądają dane
+## Dane w kodzie
 
 | Postać | Co zawiera |
 | --- | --- |
 | Budynek | wiersz GeoDataFrame o id `lokalnyId` z BDOT10k: obrys, `funkcja`, `kategoria` (stan), `kondygnacje`, `h` (wysokość) |
-| Kwadrat | kod `CRS3035RES125mN3135000E4814125` (współrzędne narożnika), `ludnosc`; ze spisem porównujemy tylko 15 kompletnych |
+| Kwadrat | kod `CRS3035RES125mN3135000E4814125` (współrzędne narożnika), `ludnosc` |
 | Karta | pola rekordu oraz `widoki` i `fasady`: kierunek → obraz RGB, najwyżej 768 px |
 | Obserwacja | JSON świadka: `typ`, `kondygnacje`, `udzial_mieszkalny` (0-1), `stan` (`uzytkowany`, `w_budowie`, `pustostan`), `pewnosc`, `uzasadnienie` |
 
 ![Wejście świadka](../paper/rysunki/karta.jpg)
 
-Wejście świadka dla kamienicy przy Piastowskiej 36: widoki z obrysem podstawy (żółty) i dachu (czerwony) oraz fasady, czyli ściany wyprostowane do prostokąta. Podstawa leży na gruncie, więc bywa przykryta dachem sąsiada. Model dostaje do 8 obrazów, tu pominięto fasady N i E. Każdy ma podpis, np. `Widok N: kamera patrzy na północ, widać ścianę południową.`, a rekord to powierzchnia, funkcje, kondygnacje, stan i wysokość z OSM. 30 z 341 budynków przy krawędzi arkusza nie ma zdjęć: świadek ma wtedy sam rekord.
+Wejście świadka dla kamienicy przy Piastowskiej 36: widoki z obrysem podstawy (żółty) i dachu (czerwony) oraz fasady, tu bez fasad N i E. Podstawa leży na gruncie, więc bywa przykryta dachem sąsiada. Model dostaje do 8 obrazów. Każdy ma podpis, np. `Widok N: kamera patrzy na północ, widać ścianę południową.`, a rekord to powierzchnia, funkcje, kondygnacje, stan i wysokość z OSM.
 
 | Wynik w `wyniki/` | Wiersz | Główne kolumny |
 | --- | --- | --- |
@@ -28,7 +28,7 @@ Wejście świadka dla kamienicy przy Piastowskiej 36: widoki z obrysem podstawy 
 
 ## Agenci
 
-Agent to jedno bezstanowe wywołanie modelu bez narzędzi, z odpowiedzią w JSON wymuszonym schematem. Stan trzyma kod, a wszystkie role obsługuje jeden `model` z TOML. Wywołania idą przez `llm.Klient`, który zapisuje je w SQLite: powtórka jest darmowa, a **każda zmiana promptu oznacza nowe, płatne wywołania**.
+Agent to jedno bezstanowe wywołanie modelu bez narzędzi, z odpowiedzią w JSON wymuszonym schematem. Stan trzyma kod, a wszystkie role obsługuje jeden `model` z TOML. Wywołania idą przez `llm.Klient`, który zapisuje je w SQLite: powtórka jest darmowa, a każda zmiana promptu oznacza nowe, płatne wywołania.
 
 | Agent | Kiedy | Dostaje | Zwraca |
 | --- | --- | --- | --- |
@@ -37,15 +37,11 @@ Agent to jedno bezstanowe wywołanie modelu bez narzędzi, z odpowiedzią w JSON
 | Agent bilansujący (LLM) | raz w rundzie z kandydatami | kwadraty z flagą (spis, szacunek, obserwacje i szacunki budynków), budynki sprzeczne z rekordem, historię pytań; nigdy obrazów | `kwadraty` (diagnozy), `pytania`, `nowa_zabudowa` |
 | Świadek, dopytanie (VLM) | raz na pytanie po filtrze | to co świadek, poprzednią odpowiedź, pytanie | całą obserwację od nowa |
 
-Pełne prompty są w kodzie, a po angielsku w dodatku artykułu. Najważniejsze instrukcje:
+Pełne prompty są w kodzie, a po angielsku w dodatku artykułu.
 
-- Świadek (`system_swiadka`): opisz budynek w obrysach; gdy obraz przeczy rekordowi, opisz obraz; nie szacuj liczby mieszkańców; wybierz jeden z 10 typów.
-- Agent bilansujący (`SYSTEM_BILANSU`): nie poprawiasz liczb i nie musisz doprowadzić do zgodności; nie podawaj świadkowi liczb ze spisu ani oczekiwanej odpowiedzi; nie pytaj o kondygnacje.
-- Dopytanie (`SYSTEM_DOPYTANIA`, dopisany do promptu świadka): agent nie widzi zdjęć i może się mylić; zmień odpowiedź tylko wtedy, gdy obraz to uzasadnia.
+## Pętla
 
-## Pętla rozmowy
-
-Najpierw świadek i wzór przechodzą raz przez każdy budynek. Przy `estymator = "petla"` rusza potem rozmowa w `petla.uzgodnij`, a każdą wiadomość przekazuje kod. Debaty agentów potrafią zbiec do złej odpowiedzi (Du i in. 2024), więc pętla nie wymusza zgodności ze spisem.
+Świadek i wzór przechodzą najpierw raz przez każdy budynek. Przy `estymator = "petla"` rusza potem `petla.uzgodnij`, a każdą wiadomość przekazuje kod. Debaty agentów potrafią zbiec do złej odpowiedzi (Du i in. 2024), więc pętla nie wymusza zgodności ze spisem.
 
 ```mermaid
 flowchart TD
@@ -62,24 +58,12 @@ flowchart TD
     R -- tak --> K
 ```
 
-1. **Bilans** (`bilans`): szacunki sumujemy w kompletnych kwadratach i mnożymy przez wspólną skalę, żeby suma równała się spisowi. Skala nie trafia do szacunków budynków. Flaga: różnica ponad 1,5 raza w dowolną stronę i co najmniej 25 osób.
-2. **Kandydaci:** budynki z kwadratów z flagą oraz, także spoza nich, sprzeczne z rekordem: świadek i BDOT10k różnią się co do tego, czy ktoś tu mieszka (`sprzeczny`).
-3. **Agent** stawia diagnozę: `blad_swiadka`, `nowa_zabudowa`, `rubryka`, `szum_spisu` (rozjazd z przypisania ludzi do kwadratów) albo `nieznana`, i wybiera, o co pytać. Diagnozy i lista `nowa_zabudowa` trafiają tylko do zapisu. Brak odpowiedzi to odmowa modelu albo limit tokenów.
-4. **Filtr** (`wazne_pytania`): pytania tylko o kandydatów i o `typ`, `udzial_mieszkalny` albo `stan`, jedno na budynek w rundzie, najwyżej 20 na rundę, bez powtórki pary budynek i atrybut. Cyfry zmieniają się w `…`, żeby świadek nie poznał liczb ze spisu.
-5. **Świadek** odpowiada, a odpowiedź zastępuje poprzednią obserwację. Pytanie o `typ` może więc zmienić też udział.
-6. **Wzór** liczy od nowa wszystkie budynki. Tylko tak zmienia się szacunek; rubryki pętla nie zmienia.
-
-Prawdziwa rozmowa z pilota `arkusz_haiku`:
-
-```text
-Runda 1. Kwadrat ...N3135000E4814125: spis 331, szacunek 501, iloraz 1,51, flaga. Diagnoza: nieznana.
-  Agent dostaje ten kwadrat i 7 budynków sprzecznych z rekordem. Pyta o 6 z nich, o kwadrat nie pyta.
-  Jeden z nich: rekord: wielorodzinny, eksploatowany; świadek: blok_nowy, w_budowie
-  Pytanie: "Czy (...) budynek jest ukończony i użytkowany, czy trwają na nim prace budowlane lub rozbiórka?"
-  Zmiana: stan w_budowie -> uzytkowany. Wzór: 0 -> 25 mieszkańców.
-Runda 2. Flaga zostaje. Diagnoza: nowa_zabudowa. Pytanie o budynek z tego kwadratu, bez zmiany.
-Razem: 7 pytań, 5 zmian, cały arkusz 5584 -> 5618 osób (15 kwadratów przed pętlą: 3974).
-```
+1. `bilans`: szacunki sumujemy w kompletnych kwadratach i mnożymy przez wspólną skalę, żeby suma równała się spisowi. Skala nie trafia do szacunków budynków. Flaga to różnica ponad 1,5 raza w dowolną stronę i co najmniej 25 osób.
+2. Kandydaci to budynki z kwadratów z flagą oraz budynki sprzeczne z rekordem, także spoza tych kwadratów (`sprzeczny`): świadek i BDOT10k różnią się co do tego, czy ktoś tu mieszka.
+3. Agent stawia diagnozę (`blad_swiadka`, `nowa_zabudowa`, `rubryka`, `szum_spisu` albo `nieznana`) i wybiera, o co pytać. Diagnozy i lista `nowa_zabudowa` trafiają tylko do zapisu. Brak odpowiedzi to odmowa modelu albo limit tokenów.
+4. `wazne_pytania` przepuszcza pytania tylko o kandydatów i o `typ`, `udzial_mieszkalny` albo `stan`, jedno na budynek w rundzie, najwyżej 20 na rundę, bez powtórki pary budynek i atrybut. Cyfry zmienia na `…`, żeby świadek nie poznał liczb ze spisu.
+5. Odpowiedź świadka zastępuje poprzednią obserwację, więc pytanie o `typ` może zmienić też udział.
+6. Wzór liczy od nowa wszystkie budynki. Tylko tak zmienia się szacunek; rubryki pętla nie zmienia.
 
 Skutki `z_rekordem` (ocena kolista sprawdza model danymi, które już widział):
 
@@ -105,9 +89,9 @@ mieszkania:  mieszkańcy = powierzchnia zabudowy × kondygnacje × udział miesz
 | `zbiorowy` | `zbiorowy` | 0,22 |
 | brak, 0 osób | `uslugi`, `przemysl`, `garaz`, `inny` (wyjątek wyżej) | |
 
-Stan inny niż `uzytkowany` też daje 0. Powierzchnia i kondygnacje pochodzą z BDOT10k także przy `z_rekordem = false`, więc obraz działa na wynik przez typ, udział i stan. `pewnosc` czyta tylko agent bilansujący.
+Stan inny niż `uzytkowany` też daje 0. Powierzchnia i kondygnacje pochodzą z BDOT10k także przy `z_rekordem = false`. `pewnosc` czyta tylko agent bilansujący.
 
-Rubryka L1 pochodzi od agenta rubryki, a L2 z `kalibracja.py`: regresja z nieujemnymi współczynnikami ludności kwadratu na liczbę domów i powierzchnię kondygnacji w każdej klasie. Dopasowanie pomija kwadraty arkusza, więc ocena przed pętlą jest na nich poza próbą.
+Rubryka L1 pochodzi od agenta rubryki, a L2 z `kalibracja.py`: regresja z nieujemnymi współczynnikami ludności kwadratu na liczbę domów i powierzchnię kondygnacji w każdej klasie. Dopasowanie pomija kwadraty arkusza. Porównanie z wartościami z literatury jest w README.
 
 ## Co było zrobione
 
@@ -121,7 +105,7 @@ Rubryka L1 pochodzi od agenta rubryki, a L2 z `kalibracja.py`: regresja z nieuje
 | `model_{haiku,sonnet,opus}_s2_bez_tabeli` | `wzor` | 3 modele, bez rekordu, L1 | 40 | F1 0,95, 0,97, 0,97: różnice w granicach szumu |
 | `petla_sonnet_proba` | `petla` | Sonnet, bez rekordu, L2 | 25 | pokaz: kwadraty dobrane celowo, stary prompt agenta; świadek zmienił blok na akademik po sugerującym pytaniu |
 
-Przewagi nad baseline'em nie ma: przedziały różnicy obejmują zero. Wpływu obrazów i pętli jeszcze nie znamy: żaden przebieg nie wyłącza obrazów, a ocena po pętli jest kolista, bo agent widział sumy. Pojedynczego budynku nie ma czym sprawdzić, bo nie mamy danych o zużyciu wody.
+Przewagi nad baseline'em nie ma, bo przedziały różnicy obejmują zero. Wpływu obrazów i pętli jeszcze nie znamy: żaden przebieg nie wyłącza obrazów, a ocena po pętli jest kolista. Pojedynczego budynku nie ma czym sprawdzić, bo nie mamy danych o zużyciu wody.
 
 Jeszcze nie ma: otwartego modelu (np. Qwen), świadka bez obrazów, placebo (obrazy innego budynku, przetasowane sumy), oceny na obwodach głosowania PKW. Wykresy i prawdziwe rozmowy: `notebooks/`.
 
