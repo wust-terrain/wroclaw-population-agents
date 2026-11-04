@@ -2,9 +2,9 @@
 
 Szacujemy, ile osób mieszka w każdym budynku we Wrocławiu. Modele ruchu potrzebują jej dla pojedynczych budynków, a spis podaje ludność tylko w kwadratach 125 × 125 m.
 
-Model widzący obrazy (VLM) opisuje budynek ze zdjęć lotniczych, a liczbę mieszkańców liczy z tego zwykły wzór. Drugi model porównuje wyniki ze spisem i dopytuje pierwszego.
+Model widzący obrazy (VLM) opisuje budynek ze zdjęć lotniczych, a liczbę mieszkańców liczy z tego zwykły wzór. Drugi agent, oparty na tym samym modelu, porównuje wyniki ze spisem i dopytuje pierwszego.
 
-Działa jeden arkusz ortofotomapy: 800 × 500 m, 341 budynków. Pilot na tanim modelu Claude Haiku pokazał, że kod działa, ale nie to, że szacunki są trafne. Docelowo system ma działać na otwartym modelu, np. Qwen, którego jeszcze nie uruchamialiśmy. Pełne prompty: `docs/architektura.md`, stan prac: `paper/population-estimation.tex`, wykresy: `notebooks/`.
+Działa jeden arkusz ortofotomapy: 800 × 500 m, 341 budynków. Pilot na tanim modelu Claude Haiku pokazał, że kod działa, ale nie to, że szacunki są trafne. Docelowo system ma działać na otwartym modelu, np. Qwen, którego jeszcze nie uruchamialiśmy. Architektura: `docs/architektura.md`, pełne prompty: `src/agenci/`, stan prac i prompty po angielsku: `paper/population-estimation.tex`, wykresy: `notebooks/`.
 
 
 ## Instalacja i dane
@@ -99,7 +99,7 @@ sequenceDiagram
         E->>W: obserwacje, rubryka
         W-->>E: liczba mieszkańców
     end
-    loop najwyżej 2 rundy, gdy są flagi
+    loop najwyżej 2 rundy, gdy są flagi albo budynki sprzeczne z rekordem
         E->>A: kwadraty z flagą i ich budynki
         A-->>E: diagnozy, pytania
         E->>S: zdjęcia, poprzednia odpowiedź, pytanie
