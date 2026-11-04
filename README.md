@@ -57,24 +57,60 @@ Zdjęcia mają współrzędne, więc obrys z BDOT10k wskazuje podstawę budynku,
 
 ## Jeden budynek od początku do końca
 
-Rekord BDOT10k: 440 m², 5 kondygnacji, budynek wielorodzinny z apteką, eksploatowany. Kod wycina cztery widoki (budynek z obrysem podstawy i dachu) i fasady (ściana zwrócona do kamery, wyprostowana do prostokąta).
+Prawdziwy przebieg `arkusz_haiku` dla jednego budynku, środkowego segmentu długiego bloku. Świadek najpierw go nie rozpoznał, kod wykrył sprzeczność z BDOT10k, agent dopytał, a szacunek zmienił się z 0 na 13 osób.
 
-Świadek, czyli VLM, ogląda te obrazy i zwraca:
+![Schemat blokowy jednego przebiegu: rekord BDOT10k i wycinki ortofotomapy, rozmowy świadka i agenta bilansującego, bilans z NSP 2021 i wzór, który daje 13,37 osoby](docs/przyklad_budynku.png)
+
+Wypowiedzi modeli są dosłowne (tabela `wywolania` w `wyniki/eksperymenty.sqlite`, wiersze 6894, 7428, 7432 i 7435), a wycinki mają te same hashe co w logu. Skrócone są tylko polecenia systemowe; pełne są w `src/agenci/`.
+
+### Co jest deterministyczne
+
+Model działa tylko w krokach 5, 10, 12 i 15. Świadek ocenia budynek, a agent wybiera, o co zapytać. Całą resztę liczy kod: te same odpowiedzi modeli zawsze dają ten sam wynik, a powtórka przebiegu bierze je z SQLite. Żaden model nie podaje liczby mieszkańców, bo odpowiedź świadka nie ma takiego pola, a agent może tylko zadać pytanie.
+
+### Wzór
 
 ```text
-typ: kamienica, kondygnacje: 5, udział mieszkalny: 0,85, stan: użytkowany, pewność: 0,8
-"Apteka w BDOT wskazuje na usługi na parterze, dlatego przyjmuję około 0,85 powierzchni jako mieszkalną."
+dom:         mieszkańcy = osoby_na_dom × udział
+mieszkania:  mieszkańcy = powierzchnia × kondygnacje × udział × gęstość[klasa] / 100
+pozostałe:   mieszkańcy = 0
 ```
 
-Typ i kondygnacje wyznaczają klasę budynku, a rubryka podaje jej gęstość. Kamienica lub blok do 5 kondygnacji ma 2,05 mieszkańca na 100 m² powierzchni wszystkich kondygnacji, a wyższy 1,38:
+| Składnik | Skąd | W przykładzie |
+| --- | --- | --- |
+| powierzchnia | obrys z BDOT10k | 145,1 m² |
+| kondygnacje | BDOT10k; gdy brak, świadek; gdy też brak, wysokość / 3 | 5 |
+| udział mieszkalny | świadek | 0,9 |
+| klasa | typ od świadka i kondygnacje | `blok_prl`, 5 kondygnacji: do 5 kondygnacji |
+| gęstość albo osoby na dom | rubryka | 2,0474 |
 
-```text
-440 m² × 5 kondygnacji × 0,85 × 2,05 / 100 = 38 mieszkańców
-```
+`dom_jednorodzinny` i `szeregowiec` liczymy jako dom, `kamienica`, `blok_prl` i `blok_nowy` jako mieszkania, a `zbiorowy` ma własną gęstość. `uslugi`, `przemysl`, `garaz` i `inny` dają 0, tak samo jak stan inny niż `uzytkowany`. Wyjątek: `inny` przy rekordzie mieszkalnym i eksploatowanym dostaje klasę z rekordu. Obraz działa więc na wynik przez typ, udział i stan.
 
-Dom jednorodzinny to osoby na dom × udział. Budynek niemieszkalny albo nieużytkowany ma 0. Kondygnacje bierzemy z BDOT10k, a od świadka tylko wtedy, gdy baza ich nie ma, więc obraz działa na wynik przez typ, udział i stan.
+Rubryka to cztery liczby z kalibracji na spisie (`kalibracja.py`). Może je też podać agent rubryki, czyli LLM z własnej wiedzy, ale w tym przebiegu nie działał. Tak wygląda jeden wiersz regresji na kwadracie z przykładu, który do dopasowania nie wszedł: 0 domów, 14 561 m² budynków niskich i 2 587 m² wysokich daje 2,0474 × 145,61 + 1,3787 × 25,87 = 334 osoby wobec 486 w spisie.
 
-Rubryka to cztery liczby: osoby na dom i gęstości trzech klas (do 5 kondygnacji, wyższy, zamieszkanie zbiorowe). Daje je kalibracja na spisie (`kalibracja.py`) albo agent rubryki, czyli LLM, który podaje je z własnej wiedzy.
+### Przyjęte liczby
+
+| Liczba | Wartość | Skąd | Do czego |
+| --- | --- | --- | --- |
+| osoby na dom | 3,2123 | kalibracja | wzór |
+| gęstość: wielorodzinny do 5 kondygnacji | 2,0474 na 100 m² | kalibracja | wzór |
+| gęstość: wielorodzinny powyżej 5 | 1,3787 na 100 m² | kalibracja | wzór |
+| gęstość: zbiorowy | 0,2194 na 100 m² | kalibracja | wzór |
+| próg budynku wysokiego | 5 kondygnacji | Pirowski i Bartos 2018 | klasa we wzorze |
+| wysokość bez OSM | 3,3 m × kondygnacje + 2 m, a bez kondygnacji 8 m | założenie | wycinki, baseline objętości |
+| przesunięcie dachu | 0,85 × wysokość | sprawdzone wzrokowo, kamera ok. 40° od pionu | obrys dachu, fasady |
+| obraz dla modelu | do 768 px | limit | karta budynku |
+| flaga kwadratu | ponad 1,5 raza i co najmniej 25 osób | symulacja: przy idealnym świadku 1 flaga na 14 kwadratów | bilans |
+| rundy pętli | 2 | Du i in. 2024 | pętla |
+| pytania w rundzie | 20 | limit kosztu | pętla |
+
+Udział mieszkalny nie jest przyjętą liczbą, bo podaje go świadek osobno dla każdego budynku.
+
+### Czego ten przykład nie dowodzi
+
+- Nie wiemy, czy 13 osób to prawda, bo dla pojedynczych budynków nie mamy z czym porównać. Stykające się segmenty o podobnej powierzchni świadek od razu opisał jako `blok_prl` i dostały 12,15 oraz 13,31 osoby, więc wynik pasuje do bloku, ale to nie jest dowód.
+- Poziom jest zaniżony: w 15 kwadratach szacunek to 3 974 osoby wobec 5 476 w spisie. Część powodu leży we wzorze, bo gęstości z kalibracji zawierają już przeciętną część niemieszkalną, a wzór mnoży je jeszcze przez udział. Dlatego porównujemy rozkład między kwadratami, a nie sumy.
+- Świadek widział rekord (`z_rekordem = true`), a obie jego odpowiedzi powołują się na BDOT10k. Nie wiemy więc, czy poprawkę wymusił widok S, czy sam rekord.
+- Dobry wniosek nie znaczy dobrego uzasadnienia: „niższe skrzydło” w drugiej odpowiedzi to w rzeczywistości dach tego samego budynku.
 
 ## Jak działa pętla
 

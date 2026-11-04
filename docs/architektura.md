@@ -17,7 +17,7 @@ Rysunek z artykułu; *Estimator* to na nim wzór, nie pole `estymator` z TOML. U
 
 ![Wejście świadka](../paper/rysunki/karta.jpg)
 
-Wejście świadka dla budynku z README: widoki z obrysem podstawy (żółty) i dachu (czerwony) oraz fasady, czyli ściany wyprostowane do prostokąta. Podstawa leży na gruncie, więc bywa przykryta dachem sąsiada. Model dostaje do 8 obrazów, tu pominięto fasady N i E. Każdy ma podpis, np. `Widok N: kamera patrzy na północ, widać ścianę południową.`, a rekord to powierzchnia, funkcje, kondygnacje, stan i wysokość z OSM. 30 z 341 budynków przy krawędzi arkusza nie ma zdjęć: świadek ma wtedy sam rekord.
+Wejście świadka dla kamienicy przy Piastowskiej 36: widoki z obrysem podstawy (żółty) i dachu (czerwony) oraz fasady, czyli ściany wyprostowane do prostokąta. Podstawa leży na gruncie, więc bywa przykryta dachem sąsiada. Model dostaje do 8 obrazów, tu pominięto fasady N i E. Każdy ma podpis, np. `Widok N: kamera patrzy na północ, widać ścianę południową.`, a rekord to powierzchnia, funkcje, kondygnacje, stan i wysokość z OSM. 30 z 341 budynków przy krawędzi arkusza nie ma zdjęć: świadek ma wtedy sam rekord.
 
 | Wynik w `wyniki/` | Wiersz | Główne kolumny |
 | --- | --- | --- |
