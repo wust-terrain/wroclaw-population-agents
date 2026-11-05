@@ -1,0 +1,99 @@
+\documentclass[11pt]{article}
+
+% "preprint" = wersja z nazwiskami i numerami stron (do oddawania etapów kursu).
+\usepackage[preprint]{acl}
+
+\usepackage{times}
+\usepackage{latexsym}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{microtype}
+\usepackage{inconsolata}
+\usepackage{xcolor}
+
+% Widoczny znacznik luki. Przed oddaniem: \renewcommand{\todo}[1]{} ukrywa wszystkie.
+\newcommand{\todo}[1]{{\color{red}[TODO: #1]}}
+
+\title{Who Lives in This Building? An Agentic VLM System for Building-Level Population Estimation in Wrocław}
+
+% Pięć osób z jedną afiliacją: imiona w dwóch rzędach, afiliacja i kontakt pod spodem.
+\author{
+  \textbf{First Author},
+  \textbf{Second Author},
+  \textbf{Third Author},
+\\
+  \textbf{Fourth Author},
+  \textbf{Fifth Author}
+\\
+\\
+  Wrocław University of Science and Technology
+\\
+  \small{
+    \textbf{Correspondence:} \texttt{email@domain}
+  }
+}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Public population data for Wrocław are aggregated at the macro scale, and even the city total is uncertain, while traffic models need the distribution of trip origins at the level of individual buildings.
+We study an agentic system based on large language and vision-language models that distributes population over buildings using GIS data (BDOT10k, OSM), aerial orthophotos and census grids.
+We vary two factors, the information source (vector data only, vertical and oblique imagery, wider context) and the agent architecture (volume heuristic, single building observation, district-level rules, iterative balancing), and compare them against a volume-based baseline on quality, stability and cost.
+This draft contains the introduction and the review of related work.
+\end{abstract}
+
+\section{Introduction}
+
+Knowing where people live inside a city is a prerequisite for traffic modelling, emergency planning and many urban analyses.
+Official statistics are published for administrative units or for regular grids (in Poland, the 2021 census grid at 125\,m--1\,km) and are not available for individual buildings.
+In Wrocław the problem starts earlier: the city total is itself disputed, with about 600--675 thousand residents in the cadastral register (KBR) and about 893.5 thousand in municipal expert studies.\todo{cite sources of both figures}
+A building-level method must therefore be robust to an uncertain control total rather than tuned to it.
+
+Classical dasymetric methods redistribute aggregated counts using building footprints and a few attributes \citep{mennis2003generating,calka2016redistribution,pirowski2018detailed,pirowski2024dasymetric}.
+Their acknowledged weakness is that national building databases say little about how much of a building is residential, which shops occupy the ground floor, or how densely it is inhabited \citep{pirowski2018detailed}.
+This information is partly visible in imagery.
+Vision-language models (VLMs) can describe buildings from photographs \citep{yang2024streetview,openfacades2025}, and language models carry geospatial knowledge that can be elicited with suitable prompts \citep{manvi2024geollm}.
+It is not clear, however, whether an agentic combination of these capabilities improves building-level population estimates over a simple volume heuristic, and at what cost.
+
+\paragraph{Research questions.}
+We treat the problem as a controlled experiment on an agentic system, varying the information source $S$ ($S_0$: vector data; $S_1$: plus vertical orthophoto crops; $S_2$: plus oblique views N, E, S, W; $S_3$: $S_2$ with a larger surrounding region) and the architecture $L$ ($L_0$: heuristic baseline, $V=\text{area}\times\text{height}$; $L_1$: multimodal observation of a single building; $L_2$: classification rules at district level; $L_3$: iterative balancing of the district total in 2--3 rounds).
+\begin{description}
+  \item[H1] Image data improve the accuracy of the population distribution relative to non-image data, in particular for single-family houses, mixed-use buildings and dormitories.
+  \item[H2] District-level rules and agentic balancing improve stability and quality compared with a single model call.
+\end{description}
+Quality is measured by Spearman correlation with water consumption from the municipal utility, by MAE and WAPE against census grids, and by the F1 score of building classification; stability by variance across repetitions; cost by API cost, tokens, latency and number of calls.
+
+\section{Related Work}
+
+\paragraph{Dasymetric and building-level population mapping.}
+Dasymetric mapping redistributes aggregate counts using ancillary data \citep{mennis2003generating}.
+Building-based variants estimate residents from footprint, volume or floor area \citep{lwin2009gis,ural2011building}.
+Closest to our setting are Polish studies on BDOT10k.
+\citet{calka2016redistribution} redistribute population to a 1\,km grid from building characteristics.
+\citet{pirowski2018detailed} calibrate the floor area per inhabitant on 141 urban units of Kraków and show that separating single- and multi-family buildings reduces the mean absolute percentage error (MAPE) from 48\% to 31\%, and to 10\% with an additional segmentation of the units.
+\citet{pirowski2024dasymetric} extend this to 19 population maps and report, on a $1\times 1$\,km grid, a MAPE of 19.2\% for the best variant against 310.8\% for a baseline using only urban-unit totals.
+Two caveats from \citet{pirowski2018detailed} matter here: parameters were fitted and scored on the same units, and the share of non-residential floor area (for example commercial ground floors) could not be modelled from the database.
+\todo{read Pirowski and Szypuła (2024) in full; only the abstract was available}
+
+\paragraph{LLMs for spatial tasks.}
+\citet{manvi2024geollm} show that prompts enriched with nearby places from OpenStreetMap let a language model predict indicators such as population density at 1\,km resolution, while coordinates alone work poorly.
+Language models are also used to synthesise populations and drive agents in urban mobility simulators \citep{mobiverse2025,gatsim2025,song2025llmmobility}; these works point to validation as an open issue.
+\citet{zhou2024vlgfm} survey vision-language geo-foundation models for remote sensing.
+
+\paragraph{VLMs for building attributes.}
+Zero-shot and open-source VLMs extract building attributes from images \citep{pan2023zeroshot,openfacades2025}.
+\citet{yang2024streetview} evaluate a general multimodal model on building function, height and structure from street-view imagery, and \citet{sun2025floors} estimate the number of floors from crowdsourced street-level images, with 97.9\% of buildings within $\pm 1$ floor.
+In the literature reviewed so far we have not found a study evaluating a VLM on floors, height and function from \emph{oblique orthophotos}, the input of our system.\todo{verify this gap with a systematic search of 2025--2026 work}
+
+\paragraph{Iterative reconciliation among LLM agents.}
+In multi-agent debate, models propose answers and revise them over several rounds after reading each other's output, which improves factuality and reasoning \citep{du2024debate}.
+Our balancing loop ($L_3$) follows this pattern, but the agents reconcile a numeric total with an external constraint rather than debate a question.
+
+\paragraph{Positioning.}
+Compared with dasymetric methods, we add image evidence about the residential share and building type and use a model to describe buildings, while the number of residents is computed by a transparent formula.
+Compared with the LLM and VLM studies above, the target quantity is a population count validated against independent proxies, and the effect of each information source and architecture level is isolated with ablations, including an image placebo.
+
+\bibliography{references}
+
+\end{document}
