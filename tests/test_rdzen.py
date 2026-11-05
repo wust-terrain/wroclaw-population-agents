@@ -6,7 +6,6 @@ from agenci.estymatory import ze_wzoru
 from agenci.karta import Karta
 from agenci.petla import bilans, wazne_pytania
 
-RUBRYKA = {"osoby_na_dom": 3.0, "gestosci": {"wielorodzinny_niski": 2.0, "wielorodzinny_wysoki": 1.0, "zbiorowy": 0.5}}
 KARTA = Karta(id="a", pow_zabudowy_m2=100.0, h_m=12.0, zrodlo_h="z kondygnacji", kondygnacje=4.0, funkcja="budynek wielorodzinny",
               funkcje="budynek wielorodzinny", kategoria="eksploatowany", mieszkalny_bdot=True)
 
@@ -16,12 +15,13 @@ def obs(typ, udzial=1.0, stan="uzytkowany"):
 
 
 def test_wzor():
-    assert ze_wzoru(obs("kamienica", 0.5), KARTA, RUBRYKA) == 100 * 4 * 2.0 / 100 * 0.5  # kondygnacje z BDOT10k, nie od świadka
-    assert ze_wzoru(obs("dom_jednorodzinny"), KARTA, RUBRYKA) == 3.0
-    assert ze_wzoru(obs("uslugi"), KARTA, RUBRYKA) == 0.0
-    assert ze_wzoru(obs("kamienica", stan="pustostan"), KARTA, RUBRYKA) == 0.0
-    assert ze_wzoru(obs("inny"), KARTA, RUBRYKA) == 0.0  # bez rekordu typ "inny" nic nie znaczy...
-    assert ze_wzoru(obs("inny"), KARTA, RUBRYKA, z_rekordem=True) == 8.0  # ...a z rekordem klasę bierzemy z BDOT10k
+    assert ze_wzoru(obs("kamienica", 0.5), KARTA) == 100 * 4 * 0.5 / 37.08  # kondygnacje z BDOT10k, nie od świadka
+    assert ze_wzoru(obs("zbiorowy"), KARTA) == 100 * 4 / 31.0
+    assert ze_wzoru(obs("dom_jednorodzinny"), KARTA) == 2.88
+    assert ze_wzoru(obs("uslugi"), KARTA) == 0.0
+    assert ze_wzoru(obs("kamienica", stan="pustostan"), KARTA) == 0.0
+    assert ze_wzoru(obs("inny"), KARTA) == 0.0  # bez rekordu typ "inny" nic nie znaczy...
+    assert ze_wzoru(obs("inny"), KARTA, z_rekordem=True) == 100 * 4 / 37.08  # ...a z rekordem klasę bierzemy z BDOT10k
 
 
 def test_bilans_skaluje_do_sumy_spisu_i_flaguje_rozklad():

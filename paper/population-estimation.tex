@@ -49,7 +49,7 @@
 Traffic models need residents per building, but Polish census data use a 125\,m grid.
 In our system a vision-language model (VLM) describes each building from oblique aerial imagery and the BDOT10k database, a formula converts the description into residents, and a language-model agent questions the VLM where estimates disagree with the census.
 We describe the data, the prompts and a pilot on one 800\,$\times$\,500\,m orthophoto sheet (341 buildings), run on a low-cost proprietary model to test the pipeline.
-On 15 census cells the pilot does not clearly beat a volume baseline (Spearman 0.89 vs 0.85, overlapping intervals).
+On 15 census cells the pilot is level with a volume baseline (Spearman 0.83 vs 0.85, overlapping intervals).
 We have no building-level reference and have not yet tested whether imagery helps; the next step is an open-weight VLM.
 \end{abstract}
 
@@ -69,7 +69,7 @@ None is answered yet; this paper reports the data, the prompts and a pilot that 
 \section{Related Work}
 
 Dasymetric mapping redistributes counts using footprint or volume \citep{mennis2003generating,lwin2009gis,ural2011building}, also on BDOT10k \citep{calka2016redistribution}.
-In Kraków, single-family and multi-family buildings take 84 and 37\,m$^2$ of floor area per resident \citep{pirowski2018detailed}; on a 1\,km grid the best map gives a house 2.88 residents \citep{pirowski2024dasymetric}.\todo{read in full; only the abstract was available}
+In Kraków, a fit on BDOT10k floor area gives 2.88 residents per single-family house and 37\,m$^2$ of floor area per resident in multi-family buildings \citep{pirowski2018detailed}; on a 1\,km grid the best map uses the same values \citep{pirowski2024dasymetric}.\todo{read in full; only the abstract was available}
 On street-level images, zero-shot GPT-4o errs by 2.4 storeys \citep{openfacades2025}, and images add most for type and function but not for population, with predictions following a conflicting record \citep{tan2026streetview}.
 Floors have been counted from oblique facades without a VLM \citep{moubayed2025floors}; three non-systematic searches found no evaluation of VLMs on such imagery.
 Debating agents can converge on wrong answers \citep{du2024debate}, so our loop flags discrepancies without enforcing agreement.
@@ -84,7 +84,7 @@ Debating agents can converge on wrong answers \citep{du2024debate}, so our loop 
     Oblique orthophoto, GUGiK & flight 2025 & sheet 6.148.12.04.2; four RGB GeoTIFFs (views N, E, S, W), 5\,cm pixel, EPSG:2177 & 800\,$\times$\,500\,m & witness images \\
     BDOT10k (OT\_BUBD\_A), GUGiK & revised 05/2025--02/2026 & footprint, function, storeys, state & 70,322 buildings; 341 on the sheet & record, classes, check \\
     OpenStreetMap, Overpass & downloaded 10/2026 & height tag, joined where OSM covers at least half of the footprint & 318 of 341 matched & height \\
-    NSP 2021 grid, GUS & census 2021 & residents per 125\,m cell, populated cells only & 5,822 cells with a building; 31 touch the sheet & fit, flags, evaluation \\
+    NSP 2021 grid, GUS & census 2021 & residents per 125\,m cell, populated cells only & 5,822 cells with a building; 31 touch the sheet & flags, evaluation \\
     \bottomrule
   \end{tabularx}
   \caption{Data sources, all public: geoportal.gov.pl and geoportal.dolnyslask.pl (GUGiK), geo.stat.gov.pl/atom-web (GUS), openstreetmap.org. Polling-district totals (PKW, prezydent2025.pkw.gov.pl) appear only in the Introduction.}
@@ -142,7 +142,7 @@ The orthophoto is rectified to the terrain, so a building's base lies in place a
 \begin{figure*}[t]
   \centering
   \includegraphics[width=\textwidth]{architektura}
-  \caption{The system as implemented. Only the visual witness, the balancing agent and the optional rubric agent call a model; the rest is deterministic code.}
+  \caption{The system as implemented. Only the visual witness and the balancing agent call a model; the rest is deterministic code.}
   \label{fig:architektura}
 \end{figure*}
 
@@ -153,7 +153,6 @@ The orthophoto is rectified to the terrain, so a building's base lies in place a
     \toprule
     Agent & Called & Receives & Core instruction & Returns \\
     \midrule
-    Rubric (LLM) & once per run, L1 only & three building classes & residents per house, and per 100\,m$^2$ of gross floor area for each class; consider flat size, household size, vacancies & $n$, $d_c$ \\
     Visual witness (VLM) & once per building & up to 4 views and 4 facades; record if the run shows it & describe only the building in the outlines; if the image clearly contradicts the record, describe what you see; \emph{do not estimate residents} & type (10 classes), storeys, $r$, state, confidence, rationale \\
     Balancing agent (LLM) & each round with candidates & flagged cells: census, estimate, ratio, building descriptions; earlier questions and answers; \emph{no images} & one diagnosis per cell; \emph{you do not correct numbers and need not reach agreement}; never give the witness census figures or the expected answer; do not ask about storeys & diagnoses, questions, new-build ids \\
     Witness follow-up (VLM) & per accepted question & same input, previous answer, question & the agent cannot see the photos and may be wrong; \emph{change your answer only if the image justifies it} & as the witness \\
@@ -173,17 +172,16 @@ The agents (Table~\ref{tab:agenci}) are single stateless structured-output calls
 \paragraph{Estimator.}
 From the witness's type, residential share $r$ and state, with footprint $A$ and storeys $F$,
 \begin{equation}
-  \hat{P} = \begin{cases} r\,n & \text{houses,} \\ A F r\, d_c / 100 & \text{other residential classes,} \end{cases}
+  \hat{P} = \begin{cases} r\,n & \text{houses,} \\ A F r / a_c & \text{flats and collective housing,} \end{cases}
 \end{equation}
-with $n$ residents per house and density $d_c$ of class $c$ (flats up to five storeys, taller flats, collective housing); other types and buildings not in use get 0.
+with $n$ residents per house and floor area $a_c$ per resident of class $c$; other types and buildings not in use get 0.
 $F$ comes from BDOT10k, and from the witness only when missing, so images act only through type, $r$ and state.
 
 \paragraph{Rubric.}
-In L1 the rubric agent sets $n$ and $d_c$ from model knowledge.
-In L2 we fit them by non-negative least squares on 5,590 census cells (646,580 residents), excluding every cell touching the sheet; held-out WAPE on 1\,km blocks is 0.355 against 0.401 for a single density.
-L2 gives $n=3.21$ and $d_c$ of 2.05, 1.38 and 0.22, Haiku's L1 3.5 and 2.5, 2.7 and 5.0: L2 inherits the census notion of residence, so collective housing comes out low.
+The values come from the literature: $n=2.88$ and $a_c=37.08$\,m$^2$ for flats from Kraków, on the same BDOT10k floor area \citep{pirowski2018detailed}, and $a_c=31$\,m$^2$ for collective housing, the median gross area per bed of 52 US residence halls \citep{abramson2014home}.
+Housing in the two cities is similar: at the end of 2024 GUS gives 33.4\,m$^2$ of usable area per person in Kraków and 34.6\,m$^2$ in Wrocław.
 
-\paragraph{Reconciliation loop (L3).}
+\paragraph{Reconciliation loop.}
 In at most two rounds, code sums estimates per complete cell, rescales them to the census total and flags a ratio above 1.5 with a difference of at least 25 people.
 Candidates are buildings in flagged cells and, if the run shows the record, buildings contradicting it on whether anyone lives there.
 Code, not the prompt, enforces the limits: questions concern candidates only, one per building per round, at most 20, no repeats, and digits are stripped so no census figure reaches the witness.
@@ -192,9 +190,9 @@ With the record hidden, neither agent sees it, which keeps the BDOT10k check ind
 
 \section{Pilot}
 
-All runs date from 2 November 2026, one pass each at medium effort, so stability is unmeasured.
+Witness calls date from 2 November 2026 and agent calls from 5 November, one pass each at medium effort, so stability is unmeasured.
 Haiku was chosen for cost, to test the pipeline; it is not the intended model.
-API spending was 2.00 USD for 681 calls, including superseded passes.
+API spending was 2.06 USD for 689 calls, including superseded passes.
 
 \begin{table}[t]
   \centering
@@ -223,8 +221,8 @@ API spending was 2.00 USD for 681 calls, including superseded passes.
     \midrule
     Volume & 0.31 [$-$0.33, 0.89] & 0.70 [0.13, 1.28] \\
     Volume $\times$ BDOT & 0.85 [0.52, 0.98] & 0.21 [0.11, 0.32] \\
-    Haiku, before loop & 0.89 [0.64, 0.98] & 0.16 [0.10, 0.22] \\
-    Haiku, after loop$^*$ & 0.89 [0.64, 0.98] & 0.16 [0.10, 0.22] \\
+    Haiku, before loop & 0.83 [0.51, 0.95] & 0.23 [0.12, 0.38] \\
+    Haiku, after loop$^*$ & 0.83 [0.51, 0.95] & 0.23 [0.12, 0.38] \\
     \bottomrule
   \end{tabular}
   \caption{Sums against the census on 15 complete cells; WAPE after rescaling to the census total; bootstrap 95\% intervals, probably too narrow at this size. $^*$Circular: the agent saw these totals.}
@@ -241,7 +239,7 @@ API spending was 2.00 USD for 681 calls, including superseded passes.
 \begin{figure}[t]
   \centering
   \includegraphics[width=\columnwidth]{szacunki}
-  \caption{Pilot output: estimated residents per building (Haiku 5.5, L2, after the loop; colour scale cut at the 98th percentile). An estimate, not a measurement.}
+  \caption{Pilot output: estimated residents per building (Haiku 5.5, after the loop; colour scale cut at the 98th percentile). An estimate, not a measurement.}
   \label{fig:szacunki}
 \end{figure}
 
@@ -252,33 +250,33 @@ Type agreement is 90\% for Sonnet--Opus and 78\% for Haiku--Opus.
 BDOT10k is an imperfect reference: all three call a church what it records as a monastery.
 
 \paragraph{Whole sheet.}
-Haiku 5.5 with the record, images, L2 and the loop processed 341 buildings in 350 calls for 0.29 USD (median 5.8\,s per witness call), without API errors.
-It gives 5,618 residents in 247 buildings (Figure~\ref{fig:szacunki}; median 20, maximum 106), including 532 in the 30 buildings estimated from the record alone.
-The witness labels 176 inhabited buildings as tenements (3,832 residents), 50 as 1950--1995 blocks (1,208) and 15 as newer (501).
-Before the loop it is level with the baseline (Table~\ref{tab:kwadraty}, Figure~\ref{fig:sumy}): the paired difference is $+0.04$ [$-0.09$, $+0.23$] in Spearman and $-0.05$ [$-0.15$, $+0.04$] in WAPE.
-Almost all the WAPE gain is one student dormitory: census 33, baseline 199, Haiku 32, because the witness reads the function from the record and L2 gives collective housing a low density.
-The credit goes to the record and the rubric, not the image; without this cell the differences are $+0.05$ [$-0.12$, $+0.29$] and $-0.01$ [$-0.06$, $+0.05$].
-The level is unresolved: on these cells the estimate is 3,974 against 5,476 in the census ($-27$\%), and the sheet total is 8,791 with Haiku's L1 rubric.
+Haiku 5.5 with the record, images and the loop processed 341 buildings in 345 calls for 0.28 USD (median 5.8\,s per witness call), without API errors.
+It gives 8,855 residents in 248 buildings (Figure~\ref{fig:szacunki}; median 27, maximum 341), including 800 in the 30 buildings estimated from the record alone.
+The witness labels 176 inhabited buildings as tenements (5,495 residents), 50 as 1950--1995 blocks (1,914) and 14 as newer (885).
+Before the loop it is level with the baseline (Table~\ref{tab:kwadraty}, Figure~\ref{fig:sumy}): the paired difference is $-0.01$ [$-0.15$, $+0.12$] in Spearman and $+0.02$ [$-0.01$, $+0.08$] in WAPE.
+The largest outlier is one student dormitory: census 33, baseline 199, Haiku 289.
+Without this cell the differences are $+0.00$ [$-0.12$, $+0.15$] and $+0.00$ [$-0.02$, $+0.03$].
+The level is unresolved: on these cells the estimate is 6,445 against 5,476 in the census ($+18$\%).
 
 \paragraph{Loop.}
-It flagged 1 of 15 cells (census 331, estimate 501), which stayed flagged.
-The agent asked 7 questions, 5 answers changed, and the total rose from 5,584 to 5,618.
-Residential F1 against BDOT10k rose from 0.986 to 0.996, but this witness sees the record, so RQ2 stays open.
-In a separate demonstration (Sonnet, images only, 3 cells chosen to include a mismatch), the agent's second question named a dormitory and the witness changed a block to collective housing; BDOT10k, unseen, agrees (Appendix~\ref{app:prompty}).
+It flagged 1 of 15 cells (the dormitory, estimate 289), which stayed flagged.
+The agent asked 2 questions, no answer changed, and the total stayed at 8,855.
+Residential F1 against BDOT10k stayed at 0.986, and this witness sees the record, so RQ2 stays open.
+In a separate demonstration (Sonnet, images only, 3 cells chosen to include a mismatch), the agent's first question named a dormitory and the witness changed a block to collective housing; BDOT10k, unseen, agrees (Appendix~\ref{app:prompty}).
 This is one case and a leading question: it shows the mechanism, not its value.
 
 \section{Limitations and Plan}
 
 We have no count for any single building, so a per-building number is a formula's output, not a measurement.
-Other limits: one sheet without houses, 15 cells, and a census four years older than the images that counts place of residence rather than actual stay, which may undercount dormitories.
-We also fixed the estimator and the agent prompt after a first pass on this sheet; the pre-loop cell metrics did not change, but this is not held-out data.
+Other limits: one sheet without houses, 15 cells, a rubric from another city and, for collective housing, another country, and a census four years older than the images that counts place of residence rather than actual stay, which may undercount dormitories.
+We also fixed the estimator and the agent prompt after a first pass on this sheet, so this is not held-out data.
 
 We plan controlled runs on more sheets, including areas with houses.
-\textbf{Independent variables}: the VLM, an open-weight model such as Qwen \citep{bai2025qwen} against the current ones (RQ3); the information shown, with or without the record, without images, or with another building's images (RQ1); the rubric, L1 or L2; the loop, off, on, or given shuffled census totals (RQ2).
+\textbf{Independent variables}: the VLM, an open-weight model such as Qwen \citep{bai2025qwen} against the current ones (RQ3); the information shown, with or without the record, without images, or with another building's images (RQ1); the loop, off, on, or given shuffled census totals (RQ2).
 \textbf{Dependent variables}: Spearman and WAPE on complete cells before the loop; F1 and storey error on image-only runs; calls, tokens, cost, latency.
 \textbf{Baselines}: volume and volume $\times$ BDOT.
 An open-weight model would make the pipeline reproducible without a paid API, but we have not run one, and its handling of Polish prompts and oblique views is unknown.
-Model, record, rubric and loop are switches in the current code; the open-model client and the no-image and placebo variants are not built.
+Model, record and loop are switches in the current code; the open-model client and the no-image and placebo variants are not built.
 
 Code and executed notebooks: \url{https://github.com/wust-terrain/wroclaw-population-agents}.
 \todo{authors: add an AI-use statement and verify all sources. Drafted with Claude Code and Scientific Agent Skills (Kassis et al., 2026, arXiv:2609.00065).}
@@ -286,6 +284,11 @@ Code and executed notebooks: \url{https://github.com/wust-terrain/wroclaw-popula
 % Bibliografia wklejona, żeby nie dodawać pliku .bib. Metadane sprawdzone w Crossref, OpenAlex, na arXiv i Hugging Face.
 \begin{thebibliography}{11}
 \providecommand{\natexlab}[1]{#1}
+
+\bibitem[{Abramson(2014)}]{abramson2014home}
+Paul Abramson. 2014.
+\newblock A home away from home: 2014 college housing report.
+\newblock \emph{College Planning \& Management}, May:20--27.
 
 \bibitem[{Bai et~al.(2025)}]{bai2025qwen}
 Shuai Bai, Keqin Chen, Xuejing Liu, Jialin Wang, and others. 2025.
@@ -375,13 +378,7 @@ Serkan Ural, Ejaz Hussain, and Jie Shan. 2011.
 \label{app:prompty}
 
 {\small
-English translation; the runs use the Polish text in \texttt{src/agenci/} (\texttt{swiadkowie.py}, \texttt{estymatory.py}, \texttt{petla.py}). Field names are translated here too. Every answer is JSON forced by a schema.
-
-\paragraph{Rubric agent, system.}
-You are compiling a rubric for a system that estimates the number of residents of buildings in Wrocław in 2025. Give: residents per house, i.e.\ the average number of residents of one single-family house or terraced segment; and, for each building class, the typical number of residents per 100\,m$^2$ of gross floor area, i.e.\ footprint multiplied by the number of storeys, including walls, staircases and corridors. Take into account typical flat size, household size and vacancies. In the rationale, say briefly where the differences between classes come from.
-
-\paragraph{Rubric agent, user.}
-Building classes: multi-family up to 5 storeys (tenements, low blocks); multi-family above 5 storeys (tall blocks); collective housing (dormitory, boarding school, care home, workers' hostel).
+English translation; the runs use the Polish text in \texttt{src/agenci/} (\texttt{swiadkowie.py}, \texttt{petla.py}). Field names are translated here too. Every answer is JSON forced by a schema.
 
 \paragraph{Visual witness, system.}
 You describe one building in Wrocław for the purpose of estimating the number of its residents.
@@ -402,13 +399,13 @@ For each direction: ``View N: the camera looks north, the south wall is visible.
 \paragraph{Balancing agent, system.}
 You compare estimates of the number of residents of buildings in Wrocław with the NSP 2021 census in 125\,m cells. A building's estimate is computed by a formula from a description that the visual witness made from aerial photos; you do not see these photos. The estimates are rescaled so that the sum over the whole area matches the census, so only the distribution between cells matters.
 
-Formula: house = residents per house $\times$ residential share; other buildings = footprint $\times$ storeys $\times$ residential share $\times$ class density / 100. The formula takes storeys from BDOT10k, and from the witness only when BDOT10k does not give them, so the witness's storey count usually does not affect the estimate. Look for the cause of a discrepancy in type, residential share and state; do not ask about storeys.
+Formula: house = residents per house $\times$ residential share; other buildings = footprint $\times$ storeys $\times$ residential share / m$^2$ per person of the class. The formula takes storeys from BDOT10k, and from the witness only when BDOT10k does not give them, so the witness's storey count usually does not affect the estimate. Look for the cause of a discrepancy in type, residential share and state; do not ask about storeys.
 
-For each cell with a discrepancy, give one diagnosis: witness error (a building description looks wrong, e.g.\ a block described as services, or a wrong residential share); new building (the excess may be real because the building was finished after the 2021 census); rubric (the discrepancy comes from the density assumed for this class, not from the description); census noise (the descriptions are credible and the discrepancy may come from how people are assigned to cells, e.g.\ a building on a cell boundary); unknown (cannot be assessed).
+For each cell with a discrepancy, give one diagnosis: witness error (a building description looks wrong, e.g.\ a block described as services, or a wrong residential share); new building (the excess may be real because the building was finished after the 2021 census); rubric (the discrepancy comes from the value assumed for this class, not from the description); census noise (the descriptions are credible and the discrepancy may come from how people are assigned to cells, e.g.\ a building on a cell boundary); unknown (cannot be assessed).
 
 You do not correct numbers and you need not reach agreement: the census may be out of date and a discrepancy may be real. You may ask the witness to look at a specific building again, but only when its description really is doubtful. In the question, say what the witness should look at. Do not give census figures or the answer you expect, because the witness is to describe what it sees.
 
-Return: cells, with the code of each cell with a discrepancy, its diagnosis and a one-sentence rationale, or an empty list if no cell has one; questions, with a building (identifier from the list), an attribute (type, residential share or state) and the question for the witness; new buildings, identifiers of buildings that look finished after 2021; rubric note, empty text, because the rubric is calibrated on the whole city.
+Return: cells, with the code of each cell with a discrepancy, its diagnosis and a one-sentence rationale, or an empty list if no cell has one; questions, with a building (identifier from the list), an attribute (type, residential share or state) and the question for the witness; new buildings, identifiers of buildings that look finished after 2021.
 
 \paragraph{Balancing agent, user.}
 The rubric and the scale factor. For each flagged cell: ``Cell \emph{code}: census 2021 \emph{x} people, estimate \emph{y} people, ratio \emph{z}. Buildings:'' with one line per building: id, the BDOT10k record if shown (otherwise only the footprint), the witness's type, storeys, share, state, confidence and rationale, and the estimate. Then buildings whose description contradicts the record, and earlier questions and answers.
@@ -420,17 +417,17 @@ The witness system prompt, followed by: You are looking at this building a secon
 The same images and record, then: ``Your previous answer: type, storeys, residential share, state. Question from the balancing agent (\emph{attribute}): \emph{question}.''
 
 \paragraph{A real exchange (translated).}
-Sonnet 5.5, images only, under an earlier agent prompt that still allowed questions about storeys; 25 buildings in 3 cells chosen to include a large mismatch, so this is a demonstration and not a sample.
+Sonnet 5.5, images only; 25 buildings in 3 cells chosen to include a large mismatch, so this is a demonstration and not a sample.
 
 \emph{Witness, first look:} block from 1950--1995, 11 storeys, share 0.90, confidence 0.60. ``A long, tall prefabricated building with repeating windows and a flat roof with installations, typical of the socialist period. On the facades about 6 storeys are visible above the plinth in view E and more in view W, so I assume 11; it may be a dormitory, but the window pattern suggests flats.''
 
-\emph{Balance:} census 33, estimate 157, ratio 4.64; the cell is flagged.
+\emph{Balance:} census 33, estimate 177, ratio 5.22; the cell is flagged.
 
-\emph{Agent, round 1:} witness error. ``Count the above-ground storeys of this building separately on each facade and in each view, including the plinth and any raised levels, and describe where the difference between views comes from.'' \emph{Witness:} no change.
+\emph{Agent, round 1:} witness error. ``Look at this building again: does it look like a residential block or a collective-housing building, e.g.\ a dormitory or a workers' hostel? Describe the features by which you recognise it (window layout, balconies, entrances, surroundings).''
 
-\emph{Agent, round 2:} witness error. ``Assess whether this building looks like an ordinary residential block with balconies and staircases, or rather like a dormitory or another collective-housing building; describe the features of the elevation, entrances and window layout that show this.''
+\emph{Witness:} ``A long, narrow, single-loaded building has regular rows of identical small windows at a constant rhythm and no balconies on the long elevations, which fits dormitory rooms. The layout resembles a 1970s academic high-rise (next to a sports field and university buildings), so I change the type from block to collective housing, though my confidence is moderate.'' Type changed to collective housing; the building's estimate rose from 285 to 341 residents.
 
-\emph{Witness:} ``A long, narrow eleven-storey building has a dense, uniform rhythm of small windows as in single rooms. There are no balconies or visible staircases, and this elevation and the location next to tennis courts and a campus point to a dormitory rather than an ordinary block.'' Type changed to collective housing; the building's estimate fell from 146 to 23 residents (about 475 with Sonnet's L1 rubric).
+\emph{Agent, round 2:} rubric. ``The whole estimate comes from one collective-housing building with 11 storeys, and the description (dormitory) is consistent, so the discrepancy more likely comes from the assumed 31\,m$^2$ per person for the collective class than from an error in the description.''
 
 \emph{BDOT10k, seen by neither agent:} student dormitory, with a pharmacy and commercial premises; 8 storeys; 1,467\,m$^2$. The question named a dormitory, so we cannot tell how much of the change came from the image and how much from the suggestion.
 }

@@ -16,19 +16,12 @@ from pathlib import Path
 import pandas as pd
 
 from agenci import PRZEBIEGI
-from agenci.estymatory import (
-    objetosc,
-    objetosc_bdot,
-    rubryka_llm,
-    rubryka_z_pliku,
-    ze_wzoru,
-)
+from agenci.estymatory import objetosc, objetosc_bdot, ze_wzoru
 from agenci.karta import zbuduj_karte
 from agenci.llm import ROWNOLEGLE, Klient
 from agenci.petla import uzgodnij
 from agenci.statystyka import budynki_w_kwadratach, kompletne_kwadraty
 from agenci.swiadkowie import swiadek_wizualny
-from ortofoto import KORZEN
 from ortofoto.arkusze import KOLEJNOSC, zasieg
 from ortofoto.budynki import wczytaj_budynki
 from ortofoto.wycinki import dostepne_kierunki
@@ -40,10 +33,9 @@ BASELINE = {"objetosc": objetosc, "objetosc_bdot": objetosc_bdot}
 class Konfiguracja:
     nazwa: str  # nazwa pliku TOML
     opis: str = ""
-    estymator: str = "wzor"  # objetosc | objetosc_bdot | wzor (świadek + rubryka) | petla (wzór + uzgadnianie, L3)
+    estymator: str = "wzor"  # objetosc | objetosc_bdot | wzor (świadek + rubryka) | petla (wzór + uzgadnianie)
     z_rekordem: bool = True  # czy świadek i agent widzą rekord BDOT10k; bez niego kontrola z BDOT10k nie jest kolista
     model: str = "claude-opus-5-5"
-    rubryka: str = "llm"  # "llm" (agent rubryki, L1) albo ścieżka do pliku TOML z agenci.kalibracja (L2)
     budynki: dict = field(default_factory=dict)  # wszystkie = true, kwadraty = n albo liczba = n (domyślnie 40); ziarno
 
     def __post_init__(self):
@@ -74,7 +66,7 @@ def wybierz_budynki(bud, konf):
     return sorted(pelne.sample(b.get("liczba", 40), random_state=ziarno).index)
 
 
-def _swiadek_i_wzor(klient, bud, ids, rubryka, z_rekordem):
+def _swiadek_i_wzor(klient, bud, ids, z_rekordem):
     """Jeden wiersz predykcji na budynek: obserwacje świadka i liczba mieszkańców ze wzoru."""
     def jeden(budynek):
         wiersz = {"budynek": budynek, "blad": None}
@@ -84,7 +76,7 @@ def _swiadek_i_wzor(klient, bud, ids, rubryka, z_rekordem):
             obs, odp = swiadek_wizualny(klient, karta, z_rekordem)
             wiersz |= {"koszt_usd": odp.koszt_usd, "stop": odp.stop}
             if obs is not None:
-                wiersz |= obs | {"mieszkancy": ze_wzoru(obs, karta, rubryka, z_rekordem)}
+                wiersz |= obs | {"mieszkancy": ze_wzoru(obs, karta, z_rekordem)}
         except Exception as e:  # jeden zepsuty budynek nie zatrzymuje przebiegu
             wiersz["blad"] = f"{type(e).__name__}: {e}"[:300]
         return wiersz
@@ -104,10 +96,9 @@ def uruchom(konf, na_sucho=False):
         pred = pd.DataFrame({"budynek": ids, "mieszkancy": [policz(zbuduj_karte(bud.loc[i], obrazy=False)) for i in ids], "blad": None})
     else:
         klient = Klient(konf.model, konf.nazwa, na_sucho)
-        rubryka = rubryka_llm(klient) if konf.rubryka == "llm" else rubryka_z_pliku(KORZEN / konf.rubryka)
-        pred = _swiadek_i_wzor(klient, bud, ids, rubryka, konf.z_rekordem)
+        pred = _swiadek_i_wzor(klient, bud, ids, konf.z_rekordem)
         if konf.estymator == "petla" and "typ" in pred:  # brak kolumny: wszystkie wywołania padły, błędy są w kolumnie blad
-            pred, tabele["dialog"], tabele["bilans"] = uzgodnij(klient, pred, bud, rubryka, konf.z_rekordem)
+            pred, tabele["dialog"], tabele["bilans"] = uzgodnij(klient, pred, bud, konf.z_rekordem)
         koszt = klient.koszt
 
     if not na_sucho:

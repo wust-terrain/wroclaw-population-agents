@@ -1,4 +1,4 @@
-"""Pętla uzgadniania (L3): agent bilansujący porównuje szacunki z NSP 2021 i dopytuje świadka wizualnego.
+"""Pętla uzgadniania: agent bilansujący porównuje szacunki z NSP 2021 i dopytuje świadka wizualnego. Tylko tu NSP wpływa na wynik.
 
 Runda: estymator -> bilans kwadratów -> agent bilansujący (LLM, bez obrazów) -> świadek ogląda wskazane budynki jeszcze
 raz -> estymator. Najwyżej dwie rundy, a wynik po każdej zostaje w predykcjach, więc da się ocenić stan przed i po.
@@ -6,9 +6,9 @@ raz -> estymator. Najwyżej dwie rundy, a wynik po każdej zostaje w predykcjach
 Pętla zgłasza rozjazdy, a nie wymusza zgodności, bo debaty agentów zbiegają też do złej odpowiedzi (Du i in. 2024):
 - szacunek zmienia się tylko przez nową obserwację świadka, nigdy przez skalowanie do sumy kwadratu,
 - świadek nie widzi liczb ze spisu, a z pytań agenta wycinamy cyfry,
-- rubryki pętla nie zmienia; działa z rubryką skalibrowaną (L2).
+- rubryka zostaje stała.
 
-Rozjazd jest słabym sygnałem błędu świadka (w symulacji idealny świadek dostawał flagę w 33% gęstych kwadratów), więc kandydatami do dopytania są też budynki,
+Rozjazd jest słabym sygnałem błędu świadka (idealny świadek, czyli sam BDOT10k z rubryką, dostaje flagę w 31% kwadratów od 100 osób), więc kandydatami do dopytania są też budynki,
 których opis przeczy rekordowi BDOT10k, o ile przebieg ten rekord widzi. Przebieg bez tabeli go nie widzi również tutaj,
 inaczej kontrola z BDOT10k byłaby kolista.
 
@@ -22,7 +22,7 @@ from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import pandas as pd
 
-from agenci.estymatory import klasa, ze_wzoru
+from agenci.estymatory import M2_NA_OSOBE, OSOBY_NA_DOM, klasa, ze_wzoru
 from agenci.karta import zbuduj_karte
 from agenci.llm import ROWNOLEGLE, tekst
 from agenci.statystyka import budynki_w_kwadratach, kompletne_kwadraty
@@ -32,13 +32,13 @@ from ortofoto.arkusze import zasieg
 RUNDY = 2  # Du i in. 2024
 MAX_PYTAN = 20  # najwięcej tyle dopytań świadka w rundzie (limit kosztu)
 PROG_ILORAZU = 1.5  # kwadrat ma rozjazd, gdy szacunek różni się od spisu ponad tyle razy...
-MIN_OSOB = 25  # ...i o co najmniej tyle osób; przy idealnym świadku daje to 1 flagę na 14 kwadratów arkusza
+MIN_OSOB = 25  # ...i o co najmniej tyle osób; przy idealnym świadku daje to 2 flagi na 15 kwadratów arkusza
 DIAGNOZY = ["blad_swiadka", "nowa_zabudowa", "rubryka", "szum_spisu", "nieznana"]
 ATRYBUTY = ["typ", "udzial_mieszkalny", "stan"]
 KOLUMNY_DIALOGU = ["runda", "rodzaj", "kod", "diagnoza", "uzasadnienie", "budynek", "atrybut", "pytanie", "odpowiedz", "zmiana",
                    "mieszkancy_przed", "mieszkancy_po", "blad"]
 
-SCHEMAT_BILANSU = {  # uwaga_do_rubryki nie jest używana, ale zmiana schematu unieważniłaby zapisane odpowiedzi
+SCHEMAT_BILANSU = {
     "type": "object",
     "properties": {
         "kwadraty": {"type": "array", "items": {
@@ -52,9 +52,8 @@ SCHEMAT_BILANSU = {  # uwaga_do_rubryki nie jest używana, ale zmiana schematu u
                            "pytanie": {"type": "string"}},
             "required": ["budynek", "atrybut", "pytanie"], "additionalProperties": False}},
         "nowa_zabudowa": {"type": "array", "items": {"type": "string"}},
-        "uwaga_do_rubryki": {"type": "string"},
     },
-    "required": ["kwadraty", "pytania", "nowa_zabudowa", "uwaga_do_rubryki"],
+    "required": ["kwadraty", "pytania", "nowa_zabudowa"],
     "additionalProperties": False,
 }
 
@@ -64,13 +63,13 @@ SYSTEM_BILANSU = (
     "są przeskalowane tak, żeby suma na całym obszarze zgadzała się ze spisem, więc liczy się tylko rozkład między "
     "kwadratami.\n\n"
     "Wzór: dom = osoby na dom × udział mieszkalny; pozostałe budynki = powierzchnia zabudowy × kondygnacje × udział "
-    "mieszkalny × gęstość klasy / 100. Kondygnacje wzór bierze z BDOT10k, a od świadka tylko wtedy, gdy BDOT10k ich nie "
+    "mieszkalny / m² na osobę w klasie. Kondygnacje wzór bierze z BDOT10k, a od świadka tylko wtedy, gdy BDOT10k ich nie "
     "podaje, więc liczba kondygnacji podana przez świadka zwykle nie wpływa na szacunek. Przyczyny rozjazdu szukaj w typie, "
     "udziale mieszkalnym i stanie; o kondygnacje nie pytaj.\n\n"
     "Dla każdego kwadratu z rozjazdem postaw jedną diagnozę:\n"
     "- blad_swiadka: któryś opis budynku wygląda na błędny, np. blok opisany jako usługi albo zły udział mieszkalny,\n"
     "- nowa_zabudowa: nadwyżka może być prawdziwa, bo budynek oddano po spisie z 2021 roku,\n"
-    "- rubryka: rozjazd wynika z gęstości przyjętej dla tej klasy budynków, a nie z opisu budynku,\n"
+    "- rubryka: rozjazd wynika z wartości przyjętej dla tej klasy budynków, a nie z opisu budynku,\n"
     "- szum_spisu: opisy są wiarygodne, a rozjazd może wynikać ze sposobu przypisania ludzi do kwadratów, np. budynek "
     "na granicy kwadratu,\n"
     "- nieznana: nie da się tego ocenić.\n\n"
@@ -82,8 +81,7 @@ SYSTEM_BILANSU = (
     "- kwadraty: kod kwadratu z rozjazdem, diagnoza i uzasadnienie w jednym zdaniu; gdy żaden kwadrat nie ma rozjazdu, "
     "pusta lista,\n"
     "- pytania: budynek (identyfikator z listy), atrybut (typ, udzial_mieszkalny albo stan) i pytanie do świadka,\n"
-    "- nowa_zabudowa: identyfikatory budynków, które wyglądają na oddane po 2021 roku,\n"
-    "- uwaga_do_rubryki: pusty tekst, bo rubryka jest skalibrowana na całym mieście.")
+    "- nowa_zabudowa: identyfikatory budynków, które wyglądają na oddane po 2021 roku.")
 CYFRY = re.compile(r"(bdot\s?10k)|\d+(?:[.,]\d+)?", re.IGNORECASE)  # nazwa bazy zostaje, reszta cyfr to możliwe liczby ze spisu
 
 
@@ -105,7 +103,7 @@ def sprzeczny(obs, karta):
     """Czy świadek i BDOT10k różnią się co do tego, że ktoś w budynku mieszka. Typ inny z mieszkaniami niczego nie rozstrzyga."""
     if obs["typ"] == "inny" and obs["udzial_mieszkalny"] > 0:
         return False
-    wg_swiadka = obs["stan"] == "uzytkowany" and obs["udzial_mieszkalny"] > 0 and klasa(obs["typ"], obs["kondygnacje"]) is not None
+    wg_swiadka = obs["stan"] == "uzytkowany" and obs["udzial_mieszkalny"] > 0 and klasa(obs["typ"]) is not None
     return wg_swiadka != karta.zamieszkany_bdot
 
 
@@ -119,10 +117,10 @@ def _opis_budynku(budynek, obs, karta, szacunek, z_rekordem):
             f"szacunek {szacunek:.0f} os.")
 
 
-def opis_bilansu(b, obs, karty, m, komorka, sprzeczne, z_rekordem, rubryka, historia):
+def opis_bilansu(b, obs, karty, m, komorka, sprzeczne, z_rekordem, historia):
     """Treść promptu agenta bilansującego; rekord BDOT10k tylko wtedy, gdy przebieg go widzi."""
     skala = b.skala.iloc[0] if len(b) else 1.0
-    linie = [f"Rubryka: {rubryka}. Szacunki pomnożone przez {skala:.2f}."]
+    linie = [f"Rubryka: {OSOBY_NA_DOM} osoby na dom, m² na osobę: {M2_NA_OSOBE}. Szacunki pomnożone przez {skala:.2f}."]
     for kod, k in b[b.flaga].iterrows():
         linie.append(f"\nKwadrat {kod}: spis 2021 {k.ludnosc:.0f} os., szacunek {k.szacunek:.0f} os., iloraz {k.iloraz:.2f}. Budynki:")
         linie += [_opis_budynku(i, obs[i], karty[i], m[i] * skala, z_rekordem) for i in komorka.index[komorka == kod] if i in obs]
@@ -147,7 +145,7 @@ def wazne_pytania(pytania, kandydaci, zadane):
     return wynik
 
 
-def uzgodnij(klient, pred, bud, rubryka, z_rekordem):
+def uzgodnij(klient, pred, bud, z_rekordem):
     """Pętla na predykcjach całego przebiegu; zwraca (predykcje z kolumnami rund, dialog, bilanse kwadratów po rundach)."""
     miasto, kw = budynki_w_kwadratach(zasieg())
     obs = {r["budynek"]: {k: r[k] for k in SCHEMAT_OBSERWACJI["required"]} | {"kondygnacje": int(r["kondygnacje"])}
@@ -157,7 +155,7 @@ def uzgodnij(klient, pred, bud, rubryka, z_rekordem):
     ludnosc = kw.ludnosc.reindex(kompletne_kwadraty(miasto, obs)).astype(float)
 
     def oszacuj():
-        return pd.Series({b: ze_wzoru(o, karty[b], rubryka, z_rekordem) for b, o in obs.items()}, dtype=float)
+        return pd.Series({b: ze_wzoru(o, karty[b], z_rekordem) for b, o in obs.items()}, dtype=float)
 
     obs_r0, szacunki = dict(obs), [oszacuj()]
     bilanse, dialog, historia, zadane, nowa_zabudowa, koszt_dopytan = [], [], [], set(), set(), {}
@@ -171,7 +169,7 @@ def uzgodnij(klient, pred, bud, rubryka, z_rekordem):
         if not kandydaci:
             break
         dane = klient.zapytaj(rola="bilansujacy", system=SYSTEM_BILANSU, schemat=SCHEMAT_BILANSU, tresc=[
-            tekst(opis_bilansu(b, obs, karty, m, komorka, sprzeczne, z_rekordem, rubryka, historia))]).dane
+            tekst(opis_bilansu(b, obs, karty, m, komorka, sprzeczne, z_rekordem, historia))]).dane
         if dane is None:  # odmowa modelu: zostaje dotychczasowy wynik
             break
 

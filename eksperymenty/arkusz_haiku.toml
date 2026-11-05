@@ -1,8 +1,7 @@
 # Pilot: cały system na całym arkuszu, na tanim modelu, żeby sprawdzić potok. Budynki przy krawędzi bez zdjęć (30 z 341) dostają szacunek z samego rekordu.
-opis = "rekord BDOT10k i obrazy, rubryka z kalibracji, pętla, Haiku 5.5"
+opis = "rekord BDOT10k i obrazy, rubryka z literatury, pętla, Haiku 5.5"
 estymator = "petla"
 model = "claude-haiku-5-5"
-rubryka = "eksperymenty/rubryki/nsp2021_bez_arkusza.toml"
 
 [budynki]
 wszystkie = true

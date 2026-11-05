@@ -55,14 +55,12 @@ def wczytaj_nsp(obszar=None):
 def budynki_w_kwadratach(obszar=None):
     """(budynki z BDOT10k, kwadraty NSP) dla kwadratów przecinających obszar (domyślnie całe miasto).
 
-    Budynki dostają kolumny komorka (kwadrat, w którym leży ich środek) oraz, gdy są mieszkalne i eksploatowane, klasa
-    i pow_kondygnacji (powierzchnia zabudowy × kondygnacje, brak kondygnacji liczymy jako 1).
+    Budynki dostają kolumny komorka (kwadrat, w którym leży ich środek) oraz, gdy są mieszkalne i eksploatowane, klasa.
     """
     nsp = wczytaj_nsp(obszar)
     bud = wczytaj_bdot(nsp.union_all())
     mieszkalny = (bud.funkcja_ogolna == "budynki mieszkalne") & (bud.kategoria == "eksploatowany")
-    bud["pow_kondygnacji"] = (bud.geometry.area * bud.kondygnacje.fillna(1)).where(mieszkalny, 0.0)
-    bud["klasa"] = pd.Series([klasa_bdot(f, k) for f, k in zip(bud.funkcja, bud.kondygnacje)], index=bud.index).where(mieszkalny)
+    bud["klasa"] = bud.funkcja.map(klasa_bdot).where(mieszkalny)
     srodki = gpd.GeoDataFrame(geometry=bud.centroid, crs=bud.crs)
     bud["komorka"] = gpd.sjoin(srodki, nsp[["geometry"]], predicate="within")["kod"]
     return bud, nsp

@@ -1,7 +1,7 @@
 """Świadek wizualny: jedno wywołanie VLM na budynek, zwraca obserwacje (bez liczby mieszkańców).
 
 To moduł percepcji: dostaje kartę budynku i zwraca typ zabudowy, kondygnacje, udział mieszkalny i stan. Liczbę mieszkańców
-liczy dopiero estymator, więc da się osobno sprawdzić, co wnosi obraz, a co reguła gęstości.
+liczy dopiero estymator, więc da się osobno sprawdzić, co wnosi obraz, a co rubryka.
 """
 
 from agenci.llm import obraz, tekst
