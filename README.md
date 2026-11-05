@@ -105,6 +105,8 @@ Filtr w kodzie przepuszcza pytania tylko o te budynki, jedno na budynek w rundzi
 
 W pilocie flagę ma 1 z 15 kwadratów, ten z przykładu. Agent zadał 2 pytania, filtr przepuścił oba, a świadek nie zmienił żadnej odpowiedzi, więc suma arkusza została 8855 osób. W rundzie 2 agent nie zapytał już o nic. Wynik końcowy to kolumna `mieszkancy`, a stan sprzed pętli to `mieszkancy_r0`.
 
+<img width="1260" height="440" alt="image" src="https://github.com/user-attachments/assets/017d555a-4877-48c4-98a6-9c2d7c89efca" />
+
 ## Co sprawdzamy
 
 Dla pojedynczego budynku nie mamy prawdziwej liczby mieszkańców, więc sumy w kompletnych kwadratach porównujemy ze spisem. Rubryka nie pochodzi ze spisu, więc stan przed pętlą to ocena niezależna. Spearman mówi, czy kolejność kwadratów się zgadza, a WAPE, jaką część ludzi trzeba by przesunąć między kwadratami. Przed WAPE każdą serię skalujemy do sumy spisu, więc oceniamy rozkład i da się porównać objętość w m³ z osobami. Punktem odniesienia jest `objetosc_bdot`, bo działa bez modelu. Wariant jest lepszy, gdy przedział różnicy względem niej (bootstrap po kwadratach) nie obejmuje zera.
