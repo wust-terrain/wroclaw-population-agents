@@ -34,7 +34,7 @@ Agent to jedno bezstanowe wywołanie modelu bez narzędzi, z odpowiedzią w JSON
 | Agent bilansujący (LLM) | raz w rundzie z kandydatami | kwadraty z flagą (spis, szacunek, obserwacje i szacunki budynków), budynki sprzeczne z rekordem, historię pytań | `kwadraty` (diagnozy), `pytania`, `nowa_zabudowa` |
 | Świadek, dopytanie (VLM) | raz na pytanie po filtrze | to co świadek, poprzednią odpowiedź, pytanie | całą obserwację od nowa |
 
-Pełne prompty są w kodzie, a po angielsku w dodatku artykułu.
+Pełne prompty są w kodzie.
 
 ## Pętla
 
