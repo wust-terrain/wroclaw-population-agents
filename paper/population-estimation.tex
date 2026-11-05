@@ -69,10 +69,10 @@ None is answered yet; this paper reports the data, the prompts and a pilot that 
 \section{Related Work}
 
 Dasymetric mapping redistributes counts using footprint or volume \citep{mennis2003generating,lwin2009gis,ural2011building}, also on BDOT10k \citep{calka2016redistribution}.
-In Kraków, a fit on BDOT10k floor area gives 2.88 residents per single-family house and 37\,m$^2$ of floor area per resident in multi-family buildings \citep{pirowski2018detailed}; on a 1\,km grid the best map uses the same values \citep{pirowski2024dasymetric}.\todo{read in full; only the abstract was available}
+In Kraków, a fit on BDOT10k floor area gives 2.88 residents per single-family house and 37\,m$^2$ of floor area per resident in multi-family buildings \citep{pirowski2018detailed}; on a 1\,km grid the best map uses the same values \citep{pirowski2024dasymetric}, as far as its abstract shows (no full-text access).
 On street-level images, zero-shot GPT-4o errs by 2.4 storeys \citep{openfacades2025}, and images add most for type and function but not for population, with predictions following a conflicting record \citep{tan2026streetview}.
-Floors have been counted from oblique facades without a VLM \citep{moubayed2025floors}; three non-systematic searches found no evaluation of VLMs on such imagery.
-Debating agents can converge on wrong answers \citep{du2024debate}, so our loop flags discrepancies without enforcing agreement.
+Floor counts have been estimated from geodata alone \citep{moubayed2025floors}; three non-systematic searches found no evaluation of VLMs on oblique aerial imagery.
+Debating agents can converge on wrong answers \citep{du2024debate}, and unchecked independent agents amplified errors 17.2 times against 4.4 with centralized verification \citep{kim2025scaling}, so our loop flags discrepancies without enforcing agreement.
 
 \begin{table*}[t]
   \centering
@@ -190,7 +190,7 @@ With the record hidden, neither agent sees it, which keeps the BDOT10k check ind
 
 \section{Pilot}
 
-Witness calls date from 2 November 2026 and agent calls from 5 November, one pass each at medium effort, so stability is unmeasured.
+Witness calls date from 2 November 2026 and agent calls from 5 November, one pass each at medium effort, so stability is unmeasured, although identical runs at temperature 0 can differ in accuracy by up to 15\% \citep{atil2024nondeterminism}.
 Haiku was chosen for cost, to test the pipeline; it is not the intended model.
 API spending was 2.06 USD for 689 calls, including superseded passes.
 
@@ -282,13 +282,18 @@ Code and executed notebooks: \url{https://github.com/wust-terrain/wroclaw-popula
 \todo{authors: add an AI-use statement and verify all sources. Drafted with Claude Code and Scientific Agent Skills (Kassis et al., 2026, arXiv:2609.00065).}
 
 % Bibliografia wklejona, żeby nie dodawać pliku .bib. Metadane sprawdzone w Crossref, OpenAlex, na arXiv i Hugging Face.
-\begin{thebibliography}{11}
+\begin{thebibliography}{13}
 \providecommand{\natexlab}[1]{#1}
 
 \bibitem[{Abramson(2014)}]{abramson2014home}
 Paul Abramson. 2014.
 \newblock A home away from home: 2014 college housing report.
 \newblock \emph{College Planning \& Management}, May:20--27.
+
+\bibitem[{Atil et~al.(2024)}]{atil2024nondeterminism}
+Berk Atil, Sarp Aykent, Alexa Chittams, Lisheng Fu, and others. 2024.
+\newblock Non-determinism of ``deterministic'' {LLM} settings.
+\newblock ArXiv:2408.04667.
 
 \bibitem[{Bai et~al.(2025)}]{bai2025qwen}
 Shuai Bai, Keqin Chen, Xuejing Liu, Jialin Wang, and others. 2025.
@@ -312,6 +317,11 @@ Yilun Du, Shuang Li, Antonio Torralba, Joshua~B. Tenenbaum, and Igor Mordatch.
 \newblock In \emph{Proceedings of the 41st International Conference on Machine
   Learning (ICML)}, volume 235 of \emph{PMLR}.
 \newblock ArXiv:2305.14325.
+
+\bibitem[{Kim et~al.(2025)}]{kim2025scaling}
+Yubin Kim, Ken Gu, and others. 2025.
+\newblock Towards a science of scaling agent systems.
+\newblock ArXiv:2512.08296.
 
 \bibitem[{Liang et~al.(2025)Liang, Xie, Zhao, Stouffs, and
   Biljecki}]{openfacades2025}
