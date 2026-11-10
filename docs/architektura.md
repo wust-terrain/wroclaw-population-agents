@@ -15,7 +15,7 @@ VLM (model, który widzi obrazy) opisuje budynek, a liczbę mieszkańców liczy 
 | Karta | pola rekordu oraz `widoki` i `fasady`: kierunek → obraz RGB, najwyżej 768 px |
 | Obserwacja | JSON świadka: `typ`, `kondygnacje`, `udzial_mieszkalny` (0-1), `stan` (`uzytkowany`, `w_budowie`, `pustostan`), `pewnosc`, `uzasadnienie` |
 
-Model dostaje do 8 obrazów, każdy z podpisem, np. `Widok N: kamera patrzy na północ, widać ścianę południową.` Rekord to powierzchnia, funkcje, kondygnacje, stan i wysokość z OSM. Podstawa budynku leży na gruncie, więc bywa przykryta dachem sąsiada.
+Model dostaje do 8 obrazów, każdy z podpisem, np. `Widok N: kamera patrzy na północ, widać ścianę południową.` Rekord to powierzchnia, funkcje, kondygnacje, stan i wysokość z LiDAR-u. Podstawa budynku leży na gruncie, więc bywa przykryta dachem sąsiada.
 
 | Wynik w `wyniki/` | Wiersz | Główne kolumny |
 | --- | --- | --- |
@@ -32,9 +32,10 @@ Agent to jedno bezstanowe wywołanie modelu bez narzędzi, z odpowiedzią w JSON
 | --- | --- | --- | --- |
 | Świadek (VLM) | raz na budynek | obrazy, przy `z_rekordem = true` też rekord | obserwację |
 | Agent bilansujący (LLM) | raz w rundzie z kandydatami | kwadraty z flagą (spis, szacunek, obserwacje i szacunki budynków), budynki sprzeczne z rekordem, historię pytań | `kwadraty` (diagnozy), `pytania`, `nowa_zabudowa` |
+| Szperacz (LLM z wyszukiwarką) | raz na budynek z listy, przy `szukaj = true` | adres, rekord, typ od świadka | `znalezione` (`miejsca`, `mieszkania`, `brak`), `liczba`, `zrodlo`, `cytat` |
 | Świadek, dopytanie (VLM) | raz na pytanie po filtrze | to co świadek, poprzednią odpowiedź, pytanie | całą obserwację od nowa |
 
-Pełne prompty są w kodzie, a po angielsku w dodatku artykułu.
+Pełne prompty są w kodzie.
 
 ## Pętla
 
@@ -55,7 +56,7 @@ flowchart TD
     R -- tak --> K
 ```
 
-1. `bilans` sumuje szacunki w kompletnych kwadratach i mnoży je przez wspólną skalę, żeby suma równała się spisowi. Skala służy tylko do tego porównania. Flaga to różnica ponad 1,5 raza w dowolną stronę i co najmniej 25 osób.
+1. `bilans` sumuje szacunki w kompletnych kwadratach (budynek na granicy kwadratów wnosi do każdego część proporcjonalną do obrysu) i mnoży je przez wspólną skalę, żeby suma równała się spisowi. Skala służy tylko do tego porównania. Flaga to różnica ponad 1,5 raza w dowolną stronę i co najmniej 25 osób.
 2. Kandydaci to budynki z kwadratów z flagą oraz, także spoza nich, budynki sprzeczne z rekordem (`sprzeczny`): świadek i BDOT10k różnią się co do tego, czy ktoś tu mieszka.
 3. Agent stawia diagnozę (`blad_swiadka`, `nowa_zabudowa`, `rubryka`, `szum_spisu` albo `nieznana`) i wybiera, o co pytać. Diagnozy i lista `nowa_zabudowa` trafiają tylko do zapisu. Brak odpowiedzi to odmowa modelu albo limit tokenów.
 4. `wazne_pytania` przepuszcza pytania o kandydatów i o `typ`, `udzial_mieszkalny` albo `stan`, jedno na budynek w rundzie, najwyżej 20 na rundę, bez powtórki pary budynek i atrybut. Cyfry zmienia na `…`, żeby świadek nie poznał liczb ze spisu.
@@ -88,12 +89,13 @@ Stan inny niż `uzytkowany` też daje 0. Powierzchnia i kondygnacje pochodzą z 
 
 | Plik (domyślnie w `src/agenci/`) | Co tam jest, co tu zmienisz |
 | --- | --- |
-| `src/ortofoto/` | `arkusze.py`: TIF-y; `budynki.py`: BDOT10k + OSM; `wycinki.py`: wycinki, fasady, przesunięcie dachu `K` |
+| `src/ortofoto/` | `arkusze.py`: TIF-y; `budynki.py`: BDOT10k, wysokość z LiDAR-u, adres z OSM; `wycinki.py`: wycinki, fasady, przesunięcie dachu `K` |
 | `karta.py` | `Karta`, kolory obrysów |
 | `llm.py` | `Klient`: dostawca modelu, pamięć odpowiedzi, `CENY` |
 | `swiadkowie.py` | prompt i schemat świadka, `TYPY`, `dopytaj_swiadka` |
 | `estymatory.py` | `ze_wzoru`, `klasa`, rubryka (`OSOBY_NA_DOM`, `M2_NA_OSOBE`), baseline'y: tu dopisujesz nowy (funkcja karta → liczba) |
-| `statystyka.py` | NSP 2021 i kwadraty |
+| `statystyka.py` | NSP 2021, kwadraty i udziały budynków w kwadratach |
 | `petla.py` | `bilans`, `sprzeczny`, `wazne_pytania`, `uzgodnij`, prompt agenta; `PROG_ILORAZU` 1,5, `MIN_OSOB` 25, `RUNDY` 2, `MAX_PYTAN` 20 |
+| `szperacz.py` | wybór budynków, prompt szperacza, `z_sieci`; `MAX_BUDYNKOW` 4, `MAX_WYSZUKAN` 2 |
 | `eksperyment.py` | `Konfiguracja` (pola TOML), rejestr baseline'ów `BASELINE` |
 | `ewaluacja.py` | zgodność z BDOT10k, sumy w kwadratach, bootstrap |

@@ -20,8 +20,9 @@ from agenci.estymatory import objetosc, objetosc_bdot, ze_wzoru
 from agenci.karta import zbuduj_karte
 from agenci.llm import ROWNOLEGLE, Klient
 from agenci.petla import uzgodnij
-from agenci.statystyka import budynki_w_kwadratach, kompletne_kwadraty
+from agenci.statystyka import budynki_w_kwadratach, kompletne_kwadraty, udzialy
 from agenci.swiadkowie import swiadek_wizualny
+from agenci.szperacz import poszukaj
 from ortofoto.arkusze import KOLEJNOSC, zasieg
 from ortofoto.budynki import wczytaj_budynki
 from ortofoto.wycinki import dostepne_kierunki
@@ -34,6 +35,7 @@ class Konfiguracja:
     nazwa: str  # nazwa pliku TOML
     opis: str = ""
     estymator: str = "wzor"  # objetosc | objetosc_bdot | wzor (świadek + rubryka) | petla (wzór + uzgadnianie)
+    szukaj: bool = False  # czy szperacz szuka w sieci liczby miejsc albo mieszkań dla największych budynków
     z_rekordem: bool = True  # czy świadek i agent widzą rekord BDOT10k; bez niego kontrola z BDOT10k nie jest kolista
     model: str = "claude-opus-5-5"
     budynki: dict = field(default_factory=dict)  # wszystkie = true, kwadraty = n albo liczba = n (domyślnie 40); ziarno
@@ -61,7 +63,8 @@ def wybierz_budynki(bud, konf):
         miasto = budynki_w_kwadratach(zasieg())[0]
         widoczne = [i for i, w in bud.iterrows() if dostepne_kierunki(w)]
         kody = pd.Series(kompletne_kwadraty(miasto, widoczne)).sample(b["kwadraty"], random_state=ziarno)
-        return sorted(miasto.index[miasto.komorka.isin(kody)].intersection(widoczne))
+        u = udzialy(miasto, widoczne)
+        return sorted(set(u.index.get_level_values("id")[u.index.get_level_values("kod").isin(kody)]))
     pelne = bud[[len(dostepne_kierunki(w)) == len(KOLEJNOSC) for _, w in bud.iterrows()]]
     return sorted(pelne.sample(b.get("liczba", 40), random_state=ziarno).index)
 
@@ -99,6 +102,8 @@ def uruchom(konf, na_sucho=False):
         pred = _swiadek_i_wzor(klient, bud, ids, konf.z_rekordem)
         if konf.estymator == "petla" and "typ" in pred:  # brak kolumny: wszystkie wywołania padły, błędy są w kolumnie blad
             pred, tabele["dialog"], tabele["bilans"] = uzgodnij(klient, pred, bud, konf.z_rekordem)
+        if konf.szukaj and "typ" in pred:
+            pred = poszukaj(klient, pred, bud)
         koszt = klient.koszt
 
     if not na_sucho:

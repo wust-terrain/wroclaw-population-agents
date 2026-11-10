@@ -5,6 +5,7 @@ import pandas as pd
 from agenci.estymatory import ze_wzoru
 from agenci.karta import Karta
 from agenci.petla import bilans, wazne_pytania
+from agenci.szperacz import z_sieci
 
 KARTA = Karta(id="a", pow_zabudowy_m2=100.0, h_m=12.0, zrodlo_h="z kondygnacji", kondygnacje=4.0, funkcja="budynek wielorodzinny",
               funkcje="budynek wielorodzinny", kategoria="eksploatowany", mieszkalny_bdot=True)
@@ -25,8 +26,8 @@ def test_wzor():
 
 
 def test_bilans_skaluje_do_sumy_spisu_i_flaguje_rozklad():
-    komorka = pd.Series({"a": "k1", "b": "k2"})
-    b = bilans(pd.Series({"a": 200.0, "b": 200.0}), komorka, pd.Series({"k1": 100, "k2": 300}))
+    u = pd.Series({("a", "k1"): 0.5, ("a", "k2"): 0.5}).rename_axis(["id", "kod"])  # budynek leży po połowie w dwóch kwadratach
+    b = bilans(pd.Series({"a": 400.0}), u, pd.Series({"k1": 100, "k2": 300}))
     assert b.szacunek.sum() == 400
     assert b.flaga.tolist() == [True, False]  # 200 wobec 100 to rozjazd, 200 wobec 300 jest na progu ilorazu 1,5
 
@@ -36,3 +37,12 @@ def test_pytanie_do_swiadka_nie_ma_liczb_ze_spisu():
                {"budynek": "a", "atrybut": "stan", "pytanie": "drugie o ten budynek"}, {"budynek": "x", "atrybut": "typ", "pytanie": "spoza listy"}]
     wynik = wazne_pytania(pytania, {"a"}, set())
     assert [p["pytanie"] for p in wynik] == ["Spis ma … os., a BDOT10k … kond. Co widać?"]
+
+
+def test_szperacz_zmienia_szacunek_tylko_ze_zrodlem():
+    znalezione = {"znalezione": "mieszkania", "liczba": 100, "zrodlo": "https://przyklad.pl", "cytat": "100 mieszkań"}
+    assert z_sieci(znalezione) == 171.0  # 1,71 osoby na mieszkanie
+    assert z_sieci(znalezione | {"znalezione": "miejsca"}) == 100.0
+    assert z_sieci(znalezione | {"zrodlo": ""}) is None
+    assert z_sieci(znalezione | {"znalezione": "brak"}) is None
+    assert z_sieci(None) is None  # odmowa modelu

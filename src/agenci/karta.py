@@ -21,7 +21,7 @@ class Karta:
     id: str  # lokalnyId budynku w BDOT10k
     pow_zabudowy_m2: float
     h_m: float
-    zrodlo_h: str  # pomiar OSM / z kondygnacji / domyślna
+    zrodlo_h: str  # LiDAR / z kondygnacji / domyślna
     kondygnacje: float | None  # BDOT10k
     funkcja: str | None  # przeważająca funkcja z BDOT10k, np. budynek wielorodzinny
     funkcje: str | None  # wszystkie funkcje szczegółowe z BDOT10k, np. "budynek wielorodzinny; apteka"

@@ -69,7 +69,7 @@ def system_swiadka(z_rekordem):
 
 
 def tabela(karta):
-    """Rekord budynku z BDOT10k (ewidencja budynków) i wysokość, jeśli jest zmierzona."""
+    """Rekord budynku z BDOT10k (ewidencja budynków) i wysokość, jeśli jest z LiDAR-u."""
     wiersze = [f"powierzchnia zabudowy: {karta.pow_zabudowy_m2:.0f} m²"]
     if karta.funkcja:
         wiersze.append(f"przeważająca funkcja: {karta.funkcja}")
@@ -79,8 +79,8 @@ def tabela(karta):
         wiersze.append(f"kondygnacje: {karta.kondygnacje:.0f}")
     if karta.kategoria:
         wiersze.append(f"stan: {karta.kategoria}")
-    if karta.zrodlo_h == "pomiar OSM":
-        wiersze.append(f"wysokość (OSM): {karta.h_m:.1f} m")
+    if karta.zrodlo_h == "LiDAR":
+        wiersze.append(f"wysokość (skaning laserowy): {karta.h_m:.1f} m")
     return "Dane z bazy BDOT10k:\n" + "\n".join(f"- {w}" for w in wiersze)
 
 

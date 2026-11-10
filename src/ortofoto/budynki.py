@@ -1,11 +1,13 @@
-"""Budynki na arkuszach: obrysy i funkcja z BDOT10k, adres i zmierzona wysokość z OpenStreetMap.
+"""Budynki na arkuszach: obrysy i funkcja z BDOT10k, wysokość z lotniczego skaningu laserowego, adres z OpenStreetMap.
 
 BDOT10k (warstwa OT_BUBD_A, obrysy z ewidencji gruntów i budynków) to główne źródło: każdy budynek
 ma tam funkcję (np. budynek wielorodzinny), liczbę kondygnacji i stan (eksploatowany, w budowie...).
-Z OSM dołączamy adres i tag height tam, gdzie obrys OSM pokrywa co najmniej połowę obrysu BDOT.
+Wysokość to różnica dwóch rastrów GUGiK ze skaningu laserowego (LiDAR): NMPT (powierzchnia z dachami, piksel 0,5 m)
+i NMT (sam teren, 1 m). Z OSM dołączamy adres tam, gdzie obrys OSM pokrywa co najmniej połowę obrysu BDOT.
 """
 
 import json
+import tempfile
 import urllib.parse
 import urllib.request
 
@@ -13,6 +15,8 @@ import geopandas as gpd
 import numpy as np
 import pandas as pd
 import pyogrio
+import rasterio
+import rasterio.mask
 from pyproj import Transformer
 from shapely.geometry import Polygon
 
@@ -20,6 +24,9 @@ from ortofoto import DATA
 from ortofoto.arkusze import zasieg
 
 OVERPASS = ["https://overpass-api.de/api/interpreter", "https://overpass.private.coffee/api/interpreter"]
+WCS = ("https://mapy.geoportal.gov.pl/wss/service/PZGIK/{0}/GRID1/WCS/{1}?SERVICE=WCS&VERSION=2.0.1&REQUEST=GetCoverage"
+       "&COVERAGEID={2}_PL-EVRF2007-NH&FORMAT=image/x-aaigrid&SUBSET=x({3},{5})&SUBSET=y({4},{6})")
+MODELE = {"nmpt": ("NMPT", "DigitalSurfaceModel", "DSM"), "nmt": ("NMT", "DigitalTerrainModel", "DTM")}
 TAGI = ["building", "building:levels", "height", "addr:street", "addr:housenumber", "name"]
 
 
@@ -55,6 +62,41 @@ def wczytaj_osm(obszar=None):
     osm["kondygnacje_osm"] = pd.to_numeric(osm["building:levels"], errors="coerce")
     osm["h_osm"] = pd.to_numeric(osm["height"].astype(str).str.replace(",", "."), errors="coerce")
     return osm[osm.centroid.within(obszar)]
+
+
+def model_wysokosci(nazwa, obszar=None):
+    """Plik rastra wysokości z GUGiK ("nmpt" albo "nmt") dla obszaru, pobrany raz przez WCS i zapisany w data/; EPSG:2180."""
+    obszar = obszar if obszar is not None else zasieg()
+    x0, y0, x1, y1 = (round(v) for v in obszar.bounds)
+    plik = DATA / f"{nazwa}_{x0}_{y0}_{x1}_{y1}.tif"
+    if not plik.exists():
+        ramka = Transformer.from_crs(2177, 2180, always_xy=True).transform_bounds(x0 - 20, y0 - 20, x1 + 20, y1 + 20)
+        odp = urllib.request.urlopen(WCS.format(*MODELE[nazwa], *(round(v) for v in ramka)), timeout=300).read()
+        siatka = odp[odp.find(b"ncols"):].split(b"--wcs")[0]  # serwer pakuje siatkę ASCII w odpowiedź wieloczęściową
+        with tempfile.NamedTemporaryFile(suffix=".asc") as tmp:
+            tmp.write(siatka)
+            tmp.flush()
+            with rasterio.open(tmp.name) as src:
+                profil = src.profile | {"driver": "GTiff", "crs": 2180, "compress": "deflate"}
+                with rasterio.open(plik, "w", **profil) as dst:
+                    dst.write(src.read())
+    return plik
+
+
+def wysokosc_lidar(bud, obszar=None):
+    """Wysokość budynków [m]: mediana NMPT w obrysie (bez metra przy krawędzi) minus teren, czyli 10. percentyl NMT wokół obrysu."""
+    def wartosci(src, geom):
+        z = rasterio.mask.mask(src, [geom], crop=True, filled=False)[0].compressed()
+        return z[z > -100]  # poza zasięgiem danych serwer zwraca dużą liczbę ujemną
+
+    wynik = {}
+    with rasterio.open(model_wysokosci("nmpt", obszar)) as nmpt, rasterio.open(model_wysokosci("nmt", obszar)) as nmt:
+        for i, g in bud.geometry.to_crs(2180).items():
+            srodek = g.buffer(-1)
+            dach, teren = wartosci(nmpt, g if srodek.is_empty else srodek), wartosci(nmt, g.buffer(3))
+            if len(dach) and len(teren):
+                wynik[i] = float(np.median(dach) - np.percentile(teren, 10))
+    return pd.Series(wynik, dtype=float)
 
 
 def plik_bdot():
@@ -100,8 +142,9 @@ def _dopasuj_osm(bdot, osm, prog=0.5):
 def wczytaj_budynki(obszar=None):
     """Budynki na arkuszach: BDOT10k z dołączonymi danymi OSM.
 
-    Kolumna h to wysokość [m]: tag height z OSM, a gdy go brak 3,3 · kondygnacje + 2 m, a bez kondygnacji 8 m.
-    Kolumna zrodlo_h mówi, która reguła zadziałała. mieszkalny_bdot to funkcja ogólna 'budynki mieszkalne'.
+    Kolumna h to wysokość [m] z LiDAR-u. Budynek, którego skaning jeszcze nie widział (poniżej 2 m), dostaje
+    3,3 · kondygnacje + 2 m, a bez kondygnacji 8 m. Kolumna zrodlo_h mówi, skąd jest wysokość.
+    mieszkalny_bdot to funkcja ogólna 'budynki mieszkalne'.
     """
     obszar = obszar if obszar is not None else zasieg()
     bud = wczytaj_bdot(obszar)
@@ -111,8 +154,10 @@ def wczytaj_budynki(obszar=None):
     bud = bud.join(osm[kolumny_osm], on="osm_id")
     bud["mieszkalny_bdot"] = bud.funkcja_ogolna == "budynki mieszkalne"
     kond = bud.kondygnacje.fillna(bud.kondygnacje_osm)
-    bud["h"] = bud.h_osm.fillna(3.3 * kond + 2).fillna(8.0)
-    bud["zrodlo_h"] = np.select([bud.h_osm.notna(), kond.notna()], ["pomiar OSM", "z kondygnacji"], "domyślna")
+    lidar = wysokosc_lidar(bud, obszar).reindex(bud.index)
+    lidar = lidar.where(lidar >= 2)
+    bud["h"] = lidar.fillna(3.3 * kond + 2).fillna(8.0)
+    bud["zrodlo_h"] = np.select([lidar.notna(), kond.notna()], ["LiDAR", "z kondygnacji"], "domyślna")
     return bud
 
 

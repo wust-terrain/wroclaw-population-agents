@@ -8,7 +8,7 @@ Pętla zgłasza rozjazdy, a nie wymusza zgodności, bo debaty agentów zbiegają
 - świadek nie widzi liczb ze spisu, a z pytań agenta wycinamy cyfry,
 - rubryka zostaje stała.
 
-Rozjazd jest słabym sygnałem błędu świadka (idealny świadek, czyli sam BDOT10k z rubryką, dostaje flagę w 31% kwadratów od 100 osób), więc kandydatami do dopytania są też budynki,
+Rozjazd jest słabym sygnałem błędu świadka (idealny świadek, czyli sam BDOT10k z rubryką, dostaje flagę w 23% kwadratów od 100 osób), więc kandydatami do dopytania są też budynki,
 których opis przeczy rekordowi BDOT10k, o ile przebieg ten rekord widzi. Przebieg bez tabeli go nie widzi również tutaj,
 inaczej kontrola z BDOT10k byłaby kolista.
 
@@ -25,14 +25,14 @@ import pandas as pd
 from agenci.estymatory import M2_NA_OSOBE, OSOBY_NA_DOM, klasa, ze_wzoru
 from agenci.karta import zbuduj_karte
 from agenci.llm import ROWNOLEGLE, tekst
-from agenci.statystyka import budynki_w_kwadratach, kompletne_kwadraty
+from agenci.statystyka import budynki_w_kwadratach, kompletne_kwadraty, sumy, udzialy
 from agenci.swiadkowie import OPIS, SCHEMAT_OBSERWACJI, dopytaj_swiadka
 from ortofoto.arkusze import zasieg
 
 RUNDY = 2  # Du i in. 2024
 MAX_PYTAN = 20  # najwięcej tyle dopytań świadka w rundzie (limit kosztu)
 PROG_ILORAZU = 1.5  # kwadrat ma rozjazd, gdy szacunek różni się od spisu ponad tyle razy...
-MIN_OSOB = 25  # ...i o co najmniej tyle osób; przy idealnym świadku daje to 2 flagi na 15 kwadratów arkusza
+MIN_OSOB = 25  # ...i o co najmniej tyle osób; przy idealnym świadku daje to 2 flagi na 14 kwadratów arkusza
 DIAGNOZY = ["blad_swiadka", "nowa_zabudowa", "rubryka", "szum_spisu", "nieznana"]
 ATRYBUTY = ["typ", "udzial_mieszkalny", "stan"]
 KOLUMNY_DIALOGU = ["runda", "rodzaj", "kod", "diagnoza", "uzasadnienie", "budynek", "atrybut", "pytanie", "odpowiedz", "zmiana",
@@ -85,12 +85,12 @@ SYSTEM_BILANSU = (
 CYFRY = re.compile(r"(bdot\s?10k)|\d+(?:[.,]\d+)?", re.IGNORECASE)  # nazwa bazy zostaje, reszta cyfr to możliwe liczby ze spisu
 
 
-def bilans(mieszkancy, komorka, ludnosc):
-    """Bilans kwadratów: szacunek przeskalowany do sumy spisu, iloraz do spisu i flaga rozjazdu.
+def bilans(mieszkancy, u, ludnosc):
+    """Bilans kwadratów: szacunek przeskalowany do sumy spisu, iloraz do spisu i flaga rozjazdu. u to udziały budynków w kwadratach.
 
     Skala usuwa różnicę poziomu (np. zmiana liczby mieszkańców od 2021 roku); zostaje rozkład między kwadratami.
     """
-    suma = mieszkancy.groupby(komorka.reindex(mieszkancy.index)).sum().reindex(ludnosc.index).fillna(0.0)
+    suma = sumy(mieszkancy, u).reindex(ludnosc.index).fillna(0.0)
     skala = ludnosc.sum() / suma.sum() if suma.sum() > 0 else 1.0
     b = pd.DataFrame({"ludnosc": ludnosc.astype(float), "szacunek": suma * skala})
     b["iloraz"] = (b.szacunek + 1) / (b.ludnosc + 1)
@@ -117,13 +117,13 @@ def _opis_budynku(budynek, obs, karta, szacunek, z_rekordem):
             f"szacunek {szacunek:.0f} os.")
 
 
-def opis_bilansu(b, obs, karty, m, komorka, sprzeczne, z_rekordem, historia):
+def opis_bilansu(b, obs, karty, m, u, sprzeczne, z_rekordem, historia):
     """Treść promptu agenta bilansującego; rekord BDOT10k tylko wtedy, gdy przebieg go widzi."""
     skala = b.skala.iloc[0] if len(b) else 1.0
     linie = [f"Rubryka: {OSOBY_NA_DOM} osoby na dom, m² na osobę: {M2_NA_OSOBE}. Szacunki pomnożone przez {skala:.2f}."]
     for kod, k in b[b.flaga].iterrows():
         linie.append(f"\nKwadrat {kod}: spis 2021 {k.ludnosc:.0f} os., szacunek {k.szacunek:.0f} os., iloraz {k.iloraz:.2f}. Budynki:")
-        linie += [_opis_budynku(i, obs[i], karty[i], m[i] * skala, z_rekordem) for i in komorka.index[komorka == kod] if i in obs]
+        linie += [_opis_budynku(i, obs[i], karty[i], m[i] * skala, z_rekordem) for i in u.xs(kod, level="kod").index]
     if sprzeczne:
         linie.append("\nBudynki, których opis przeczy rekordowi BDOT10k:")
         linie += [_opis_budynku(i, obs[i], karty[i], m[i] * skala, z_rekordem) for i in sprzeczne]
@@ -151,7 +151,7 @@ def uzgodnij(klient, pred, bud, z_rekordem):
     obs = {r["budynek"]: {k: r[k] for k in SCHEMAT_OBSERWACJI["required"]} | {"kondygnacje": int(r["kondygnacje"])}
            for _, r in pred[pred.typ.notna()].iterrows()}
     karty = {b: zbuduj_karte(bud.loc[b], obrazy=False) for b in obs}
-    komorka = miasto.komorka.reindex(list(obs)).dropna()
+    u = udzialy(miasto, obs)
     ludnosc = kw.ludnosc.reindex(kompletne_kwadraty(miasto, obs)).astype(float)
 
     def oszacuj():
@@ -162,14 +162,14 @@ def uzgodnij(klient, pred, bud, z_rekordem):
 
     for runda in range(1, RUNDY + 1):
         m = szacunki[-1]
-        b = bilans(m, komorka, ludnosc)
+        b = bilans(m, u, ludnosc)
         bilanse.append(b)
         sprzeczne = [i for i in obs if sprzeczny(obs[i], karty[i])] if z_rekordem else []
-        kandydaci = (set(komorka.index[komorka.isin(b.index[b.flaga])]) & set(obs)) | set(sprzeczne)
+        kandydaci = set(u.index.get_level_values("id")[u.index.get_level_values("kod").isin(b.index[b.flaga])]) | set(sprzeczne)
         if not kandydaci:
             break
         dane = klient.zapytaj(rola="bilansujacy", system=SYSTEM_BILANSU, schemat=SCHEMAT_BILANSU, tresc=[
-            tekst(opis_bilansu(b, obs, karty, m, komorka, sprzeczne, z_rekordem, historia))]).dane
+            tekst(opis_bilansu(b, obs, karty, m, u, sprzeczne, z_rekordem, historia))]).dane
         if dane is None:  # odmowa modelu: zostaje dotychczasowy wynik
             break
 
@@ -208,7 +208,7 @@ def uzgodnij(klient, pred, bud, z_rekordem):
         dialog += wiersze
 
     if len(bilanse) < len(szacunki):
-        bilanse.append(bilans(szacunki[-1], komorka, ludnosc))
+        bilanse.append(bilans(szacunki[-1], u, ludnosc))
 
     p = pred.copy()
     for k in OPIS:

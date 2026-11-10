@@ -45,18 +45,19 @@ Wyniki trafiają do `wyniki/eksperymenty/`: `<przebieg>.csv` (jeden wiersz na bu
 | --- | --- | --- |
 | Ortofotomapa skośna | Cztery pliki TIF czyli cztery fotografie z kierunków N, S, W, E, piksel to 5 cm, jeden TIF to 500m x 800m | obrazy dla modelu |
 | BDOT10k | Państwowa baza budynków z różnymi danymi o nich | obrys (stąd powierzchnia), funkcja, kondygnacje, stan |
-| OpenStreetMap | Otwarta mapa | wysokość budynku, gdy jest |
+| NMPT i NMT (GUGiK) | Wysokość powierzchni z dachami i samego terenu ze skaningu laserowego (LiDAR), piksel 0,5 m i 1 m | wysokość budynku |
+| OpenStreetMap | Otwarta mapa | adres budynku |
 | NSP 2021 | Spis powszechny, liczba osób w kwadracie 15m x 125m | gdy jest duża rozbieżność między spisem a sumą dla budynków w kwadracie to odpalamy agenta bilansującego |
 
-Budynek należy do kwadratu, w którym leży jego środek. Kwadraty na brzegach się ucinają więc dopóki działamy na jednym arkuszu to te kwadraty których wszystkie budynki mieszkalne leżą na arkuszu.
+Spis przypisuje ludzi do punktów adresowych, a długi blok leży w kilku kwadratach, więc mieszkańców budynku dzielimy między kwadraty według tego, jaka część jego obrysu leży w każdym. Kwadraty na brzegach się ucinają więc dopóki działamy na jednym arkuszu to te kwadraty których wszystkie budynki mieszkalne leżą na arkuszu.
 
-Zdjęcia TIG mają współrzędne, więc obrys z BDOT10k da się na nie łatwo nałożyć. Model dostaje z tych zdjęć 4 fasady (czyli wycinki tych samych zdjęć ze ścianą wyprostowaną do prostokąta). Przy krawędzi arkusza 29 budynków ma 3 zdjęcia, a 30 nie ma żadnego i dostaje sam rekord.
+Zdjęcia TIG mają współrzędne, więc obrys z BDOT10k da się na nie łatwo nałożyć. Model dostaje z tych zdjęć 4 fasady (czyli wycinki tych samych zdjęć ze ścianą wyprostowaną do prostokąta). Przy krawędzi arkusza 31 budynków ma 3 zdjęcia, a 30 nie ma żadnego i dostaje sam rekord.
 
 ## Jeden budynek od początku do końca
 
-Prawdziwy przebieg modlei na Claude Haiku dla akademika przy pl. Grunwalldzkim Wzór daje 341 osób, a spis ma w tym kwadracie 33, więc kwadrat dostaje flagę i odpala się agent bilansujący - Agent dopytuje świadka, świadek potwierdza swój opis i wynik się nie zmienia.
+Prawdziwy przebieg modlei na Claude Haiku dla akademika przy pl. Grunwalldzkim Wzór daje 322 osoby, a spis ma w tym kwadracie 33, więc kwadrat dostaje flagę i odpala się agent bilansujący - Agent dopytuje świadka, świadek potwierdza swój opis i wynik się nie zmienia.
 
-![Schemat blokowy jednego budynku, od rekordu BDOT10k do wyniku 340,63 osoby](docs/przyklad_budynku.png)
+![Schemat blokowy jednego budynku, od rekordu BDOT10k do wyniku 321,71 osoby](docs/przyklad_budynku.png)
 
 Odpowiedzi modeli są dosłowne, a prompty które dostały skrócone.
 
@@ -85,13 +86,13 @@ Dla akademików polskiego źródła nie znaleźliśmy, a liczba, którą wzieli�
 
 VLM dostaje powierzchnię i kondygnacje z BDOT10k.
 
-W pilocie od świadka zależy praktycznie tylko udział mieszkalny. Klasa budynku zgadza się z BDOT10k w 332 z 341 budynków, stan to `uzytkowany` w 339, a udział wynosi od 0,8 do 0,95 w 243 z 248 budynków z szacunkiem powyżej zera.
+W pilocie od świadka zależy praktycznie tylko udział mieszkalny. Klasa budynku zgadza się z BDOT10k w 330 z 341 budynków, stan to `uzytkowany` w 338, a udział wynosi od 0,8 do 0,95 w 241 z 246 budynków z szacunkiem powyżej zera.
 
 ### Wysokość i dach na zdjęciu
 
-BDOT10k nie ma pola wysokości, tylko kondygnacje. Bierzemy więc tag `height` z OSM (45 budynków), inaczej 3,3 m × kondygnacje + 2 m (287), a bez kondygnacji 8 m (9). Te 3,3 m, 2 m i 8 m TUTAJ DO TYCH ZAŁOŻEŃ WYSOKOŚCI BUDYNKU TRZEBA LITERATURY ALBO JAKIŚ SOURCE NA WYSOKOŚĆ BUDYNKÓW WE WROCŁAWIU, LEPSZY OD TEJ HEURSYTYKI.
+BDOT10k nie ma pola wysokości, tylko kondygnacje. Wysokość bierzemy ze skaningu laserowego GUGiK: mediana NMPT w obrysie budynku minus teren z NMT (340 z 341 budynków). Kod pobiera oba rastry sam przy pierwszym uruchomieniu i zapisuje je w `data/`. Budynek, którego skaning jeszcze nie widział, dostaje 3,3 m × kondygnacje + 2 m (1 budynek w budowie).
 
-Dach leży na zdjęciu o 0,85 × wysokość od podstawy, w stronę od kamery. Mnożnik dobrany mądrą trygonometrią na budynkach z wysokością z OSM (`demo_ortofotomapa_skosna.ipynb`). To znaczy, że kamera była odchylona o ok. 40° od pionu przy robieniu zdjęć do ortofotomapy.
+Dach leży na zdjęciu o 0,96 × wysokość od podstawy, w stronę od kamery. Mnożnik to tangens odchylenia kamery od pionu (ok. 44°). Wyznaczyliśmy go, dopasowując teksturę dachu między czterema widokami i dzieląc znalezione przesunięcie przez wysokość z LiDAR-u: na 61 budynkach z pewnym dopasowaniem mediana to 0,96, a cztery kierunki dają od 0,955 do 0,976.
 
 Znając tę trygonometrią możemy rysować obryss dachu i wycinać fasady. Wysokość liczy też baseline objętości, a do wzoru weszłaby tylko przy braku kondygnacji i w BDOT10k, i u świadka. W pilocie się to nie zdarzyło.
 
@@ -103,9 +104,15 @@ Agent nie widzi zdjęć. Czyta opisy takich budynków i wybiera, o co zapytać �
 
 Filtr w kodzie przepuszcza pytania tylko o te budynki, jedno na budynek w rundzie, bez powtórek, najwyżej 20 (limit kosztu), i wycina z nich cyfry, żeby świadek nie poznał liczb ze spisu. Świadek ma zmienić zdanie tylko wtedy, gdy uzasadnia to obraz, a wzór liczy wszystko od nowa. Rundy są najwyżej 2 (Du i in. 2024).
 
-W pilocie flagę ma 1 z 15 kwadratów, ten z przykładu. Agent zadał 2 pytania, filtr przepuścił oba, a świadek nie zmienił żadnej odpowiedzi, więc suma arkusza została 8855 osób. W rundzie 2 agent nie zapytał już o nic. Wynik końcowy to kolumna `mieszkancy`, a stan sprzed pętli to `mieszkancy_r0`.
+W pilocie flagę ma 1 z 14 kwadratów, ten z przykładu. Agent zapytał o 7 budynków, a świadek zmienił 2 opisy, w tym blok opisany wcześniej jako usługi. Suma arkusza wzrosła z 8921 do 8942 osób. Wynik końcowy to kolumna `mieszkancy`, a stan sprzed pętli to `mieszkancy_r0`.
 
 <img width="1260" height="440" alt="image" src="https://github.com/user-attachments/assets/017d555a-4877-48c4-98a6-9c2d7c89efca" />
+
+## Szperacz
+
+Większość ludzi i błędu siedzi w kilku dużych budynkach. Przy `szukaj = true` model z wyszukiwarką internetową (szperacz) dostaje adres i rekord najwyżej 4 budynków: najpierw typu `zbiorowy`, potem tych z największym szacunkiem. Szuka liczby miejsc albo mieszkań podanej dla tego konkretnego budynku, najwyżej 2 zapytaniami. Liczba miejsc zastępuje szacunek, a liczbę mieszkań mnożymy przez 1,71 osoby (GUS, Wrocław, 2024). Bez źródła zostaje wynik wzoru (`mieszkancy_wzor`); stronę i zdanie z liczbą zapisujemy w `zrodlo` i `cytat`.
+
+W próbie na arkuszu (4 budynki, 0,09 USD) szperacz nie znalazł żadnej liczby. Adres w OSM ma 93 z 341 budynków i żaden z tych czterech, a adres najbliższego sąsiada prowadził do innych obiektów.
 
 ## Co sprawdzamy
 
@@ -113,10 +120,10 @@ Dla pojedynczego budynku nie mamy prawdziwej liczby mieszkańców, więc sumy w 
 
 Opis budynku porównujemy z BDOT10k: F1 dla pytania "czy ktoś tu mieszka" i błąd kondygnacji. Ma to sens tylko przy `z_rekordem = false`, bo inaczej model widzi odpowiedź.
 
-Agent w pętli widział sumy kwadratów, dlatego oceniamy `mieszkancy_r0`, choć wynikiem końcowym jest `mieszkancy`. Czy pętla pomaga, jeszcze nie wiemy: uczciwy test to zgodność z BDOT10k przed pętlą i po niej przy `z_rekordem = false`, a taki przebieg mamy tylko na 25 budynkach.
+Agent w pętli widział sumy kwadratów, dlatego oceniamy `mieszkancy_r0`, choć wynikiem końcowym jest `mieszkancy`. Czy pętla pomaga, jeszcze nie wiemy: uczciwy test to zgodność z BDOT10k przed pętlą i po niej przy `z_rekordem = false`.
 
-Pilot `arkusz_haiku` (rekord widoczny, 15 kwadratów, 0,28 USD): Haiku przed pętlą ma Spearmana 0,83 i WAPE 0,23, a objętość z BDOT10k 0,85 i 0,21. Różnica to -0,01 [-0,15; +0,12] w Spearmanie i +0,02 [-0,01; +0,08] w WAPE. Oba przedziały obejmują zero, więc przewagi nie mamy. Nie wiemy też, czy pomagają obrazy, bo świadka bez obrazów jeszcze nie ma.
+Pilot `arkusz_haiku` (rekord widoczny, 14 kwadratów, 0,31 USD): Haiku przed pętlą ma Spearmana 0,89 i WAPE 0,17, a objętość z BDOT10k 0,84 i 0,21. Różnica to +0,05 [0,00; +0,21] w Spearmanie i -0,03 [-0,09; +0,03] w WAPE. Oba przedziały sięgają zera, więc przewagi nie mamy. Nie wiemy też, czy pomagają obrazy, bo świadka bez obrazów jeszcze nie ma.
 
-Najbardziej odstaje kwadrat z przykładu: spis 33, Haiku po skalowaniu 289, objętość 199. Spis liczy miejsce zamieszkania, a nie pobyt, więc studenci w dużej części nie są przypisani do akademika. Bez tego kwadratu obie serie mają Spearmana ok. 0,82 i WAPE ok. 0,17.
+Kwadrat z przykładu: spis 33, Haiku po skalowaniu 185, objętość 134. Spis liczy miejsce zamieszkania, a nie pobyt, więc studenci w dużej części nie są przypisani do akademika. Bez tego kwadratu Haiku ma Spearmana 0,86 i WAPE 0,14, a objętość 0,80 i 0,18.
 
-Przed skalowaniem szacunek to 6 445 osób wobec 5 476 w spisie, czyli +18%. Gdyby nie mnożenie przez udział, byłoby 7 490, choć 37,08 m² liczono na całą powierzchnię budynków, razem z usługami na parterze. Na całe miasto sam BDOT10k z tą rubryką, bez udziału, daje ok. 864 tys. osób wobec 657 tys. w spisie na tych samych kwadratach. Nadwyżka nie musi być błędem: [Uniwersytet Wrocławski](https://uwr.edu.pl/en/our-scientists-counted-all-the-residents-of-wroclaw/) szacuje faktyczną liczbę mieszkańców na 893 506 na koniec 2022 roku.
+Przed skalowaniem szacunek to 5 828 osób wobec 5 145 w spisie, czyli +13%. Gdyby nie mnożenie przez udział, byłoby 6 819, choć 37,08 m² liczono na całą powierzchnię budynków, razem z usługami na parterze. Na całe miasto sam BDOT10k z tą rubryką, bez udziału, daje ok. 864 tys. osób wobec 657 tys. w spisie na tych samych kwadratach. Nadwyżka nie musi być błędem: [Uniwersytet Wrocławski](https://uwr.edu.pl/en/our-scientists-counted-all-the-residents-of-wroclaw/) szacuje faktyczną liczbę mieszkańców na 893 506 na koniec 2022 roku.
