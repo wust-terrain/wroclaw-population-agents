@@ -19,6 +19,7 @@ M2_NA_OSOBE = {  # powierzchnia zabudowy × kondygnacje na osobę
     "wielorodzinny": 37.08,  # jak wyżej
     "zbiorowy": 31.0,  # College Planning & Management 2014, tab. 1: mediana 333,3 stopy² na miejsce w akademiku
 }
+OSOBY_NA_MIESZKANIE = 1.71  # GUS, Wrocław, koniec 2024 (polskawliczbach.pl); mnoży liczbę mieszkań znalezioną przez szperacza
 DOMY = {"dom_jednorodzinny", "szeregowiec"}
 WIELORODZINNE = {"kamienica", "blok_prl", "blok_nowy"}
 DOMY_BDOT = {"budynek jednorodzinny", "dom letniskowy", "leśniczówka", "dom parafialny", "rezydencja biskupia"}

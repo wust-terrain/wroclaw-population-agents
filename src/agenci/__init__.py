@@ -7,6 +7,7 @@ Moduły (w kolejności przepływu danych):
     estymatory   - liczba mieszkańców: baseline'y, rubryka (stałe z literatury) i wzór
     statystyka   - NSP 2021 w kwadratach 125 m i przypisanie budynków do kwadratów
     petla        - pętla uzgadniania: agent bilansujący dopytuje świadka o rozjazdy ze spisem
+    szperacz     - agent z wyszukiwarką: liczba miejsc albo mieszkań dla największych budynków
     eksperyment  - konfiguracja przebiegu (TOML) i uruchomienie na zbiorze budynków
     ewaluacja    - zgodność z BDOT10k i sumy w kwadratach NSP 2021
 """

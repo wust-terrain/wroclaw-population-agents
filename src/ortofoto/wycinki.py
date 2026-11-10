@@ -11,7 +11,8 @@ from shapely.geometry.polygon import orient
 
 from ortofoto.arkusze import KIERUNKI, KOLEJNOSC, czytaj, pokrywa
 
-K = 0.85  # przesunięcie dachu / wysokość budynku; sprawdzone wzrokowo dla N, E, S i W (kamera ok. 40° od pionu)
+K = 0.96  # przesunięcie dachu / wysokość budynku, czyli tangens odchylenia kamery od pionu (ok. 44°); z dopasowania dachów
+# między 4 widokami na budynkach o wysokości z LiDAR-u, to samo dla N, E, S i W
 
 
 def dach(b, kier, k=K):

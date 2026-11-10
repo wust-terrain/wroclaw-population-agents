@@ -26,6 +26,7 @@ CENY = {  # USD za 1 mln tokenów (wejście, wyjście); cennik Anthropic z 2026-
     "claude-sonnet-5-5": (2.0, 10.0),
     "claude-haiku-5-5": (0.10, 0.50),
 }
+WYSZUKANIE_USD = 0.01  # cena jednego zapytania do wyszukiwarki (10 USD za 1000); sprawdź przed dużym przebiegiem
 Z_FALLBACKIEM = {"claude-opus-5-5", "claude-sonnet-5-5"}  # modele, dla których włączamy fallbacks: "default"
 EFFORT = "medium"
 MAX_TOKENS = 16000
@@ -88,21 +89,24 @@ class Klient:
                 system TEXT, prompt TEXT, odpowiedz TEXT, stop TEXT, tokeny_we INTEGER, tokeny_wy INTEGER, koszt_usd REAL, czas_s REAL)""")
             self.db.execute("CREATE INDEX IF NOT EXISTS wywolania_klucz ON wywolania (klucz)")
 
-    def zapytaj(self, *, rola, system, tresc, schemat, budynek=None):
-        """Wysyła prompt (lista bloków tekst/obraz) i zwraca Odpowiedz z JSON-em zgodnym ze schematem."""
+    def zapytaj(self, *, rola, system, tresc, schemat, budynek=None, wyszukiwan=0):
+        """Wysyła prompt (lista bloków tekst/obraz) i zwraca Odpowiedz z JSON-em zgodnym ze schematem.
+
+        wyszukiwan > 0 daje modelowi wyszukiwarkę internetową z takim limitem zapytań.
+        """
         if self.na_sucho:
-            odp = self._na_sucho(system, tresc, schemat)
+            odp = self._na_sucho(system, tresc, schemat, wyszukiwan)
         else:
-            odp = self._z_pamieci_albo_api(rola, system, tresc, schemat, budynek)
+            odp = self._z_pamieci_albo_api(rola, system, tresc, schemat, budynek, wyszukiwan)
         with self.blokada:
             self.koszt += odp.koszt_usd
         return odp
 
-    def _z_pamieci_albo_api(self, rola, system, tresc, schemat, budynek):
+    def _z_pamieci_albo_api(self, rola, system, tresc, schemat, budynek, wyszukiwan):
         # na_sucho i powtorzenie są stałe, ale klucze odpowiedzi już zapisanych w bazie je zawierają
         klucz = hashlib.sha256(json.dumps(
             {"model": self.model, "effort": EFFORT, "na_sucho": False, "system": system, "tresc": tresc, "schemat": schemat,
-             "powtorzenie": 0}, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+             "powtorzenie": 0} | ({"wyszukiwan": wyszukiwan} if wyszukiwan else {}), sort_keys=True, ensure_ascii=False).encode()).hexdigest()
         with self.blokada:
             zapisana = self.db.execute("SELECT odpowiedz, koszt_usd, stop FROM wywolania WHERE klucz = ? LIMIT 1", (klucz,)).fetchone()
         if zapisana:
@@ -110,10 +114,10 @@ class Klient:
             return Odpowiedz(json.loads(odpowiedz) if odpowiedz else None, koszt, stop)
 
         start = time.perf_counter()
-        dane, we, wy, model_odp, stop = self._wyslij(system, tresc, schemat)
+        dane, we, wy, model_odp, stop, szukan = self._wyslij(system, tresc, schemat, wyszukiwan)
         czas = time.perf_counter() - start
         cena_we, cena_wy = CENY.get(model_odp, CENY[self.model])
-        koszt = (we * cena_we + wy * cena_wy) / 1e6
+        koszt = (we * cena_we + wy * cena_wy) / 1e6 + szukan * WYSZUKANIE_USD
         with self.blokada:
             self.db.execute("""INSERT INTO wywolania (klucz, eksperyment, budynek, rola, model, model_odpowiedzi, system, prompt,
                                odpowiedz, stop, tokeny_we, tokeny_wy, koszt_usd, czas_s) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
@@ -122,21 +126,31 @@ class Klient:
             self.db.commit()
         return Odpowiedz(dane, koszt, stop)
 
-    def _na_sucho(self, system, tresc, schemat):
-        """Szacunek: ok. 3 znaki na token, ok. 800 tokenów na obraz, 1500 tokenów wyjścia z zapasem na myślenie."""
+    def _na_sucho(self, system, tresc, schemat, wyszukiwan=0):
+        """Szacunek: ok. 3 znaki na token, ok. 800 tokenów na obraz, 1500 tokenów wyjścia z zapasem na myślenie, 10 tys. tokenów na wynik wyszukiwania."""
         znaki = len(system) + sum(len(b["text"]) for b in tresc if b["type"] == "text")
-        we = znaki // 3 + 800 * sum(b["type"] == "image" for b in tresc)
+        we = znaki // 3 + 800 * sum(b["type"] == "image" for b in tresc) + 10000 * wyszukiwan
         cena_we, cena_wy = CENY[self.model]
-        return Odpowiedz(_przyklad(schemat), (we * cena_we + 1500 * cena_wy) / 1e6, "na_sucho")
+        return Odpowiedz(_przyklad(schemat), (we * cena_we + 1500 * cena_wy) / 1e6 + wyszukiwan * WYSZUKANIE_USD, "na_sucho")
 
-    def _wyslij(self, system, tresc, schemat):
+    def _wyslij(self, system, tresc, schemat, wyszukiwan=0):
         zapytanie = {"model": self.model, "max_tokens": MAX_TOKENS, "system": system, "messages": [{"role": "user", "content": tresc}],
                      "output_config": {"effort": EFFORT, "format": {"type": "json_schema", "schema": schemat}}}
-        if self.model in Z_FALLBACKIEM:  # przy odmowie API samo ponawia zapytanie na innym modelu
-            odp = self.api.beta.messages.create(betas=["server-side-fallback-2026-07-01"], fallbacks="default", **zapytanie)
-        else:
-            odp = self.api.messages.create(**zapytanie)
+        if wyszukiwan:  # nowsza wersja narzędzia działa tylko na Opusie i Sonnecie
+            wersja = "web_search_20260209" if self.model in Z_FALLBACKIEM else "web_search_20250305"
+            zapytanie["tools"] = [{"type": wersja, "name": "web_search", "max_uses": wyszukiwan}]
+        we = wy = szukan = 0
+        for _ in range(4):  # pause_turn: serwer przerwał długą turę z narzędziem, odsyłamy ją bez zmian i serwer ją kończy
+            if self.model in Z_FALLBACKIEM:  # przy odmowie API samo ponawia zapytanie na innym modelu
+                odp = self.api.beta.messages.create(betas=["server-side-fallback-2026-07-01"], fallbacks="default", **zapytanie)
+            else:
+                odp = self.api.messages.create(**zapytanie)
+            we, wy = we + odp.usage.input_tokens, wy + odp.usage.output_tokens
+            szukan += getattr(getattr(odp.usage, "server_tool_use", None), "web_search_requests", 0) or 0
+            if odp.stop_reason != "pause_turn":
+                break
+            zapytanie["messages"] = [{"role": "user", "content": tresc}, {"role": "assistant", "content": odp.content}]
         dane = None
-        if odp.stop_reason not in ("refusal", "max_tokens"):
-            dane = json.loads(next(b.text for b in odp.content if b.type == "text"))
-        return dane, odp.usage.input_tokens, odp.usage.output_tokens, odp.model, odp.stop_reason
+        if odp.stop_reason == "end_turn":
+            dane = json.loads([b.text for b in odp.content if b.type == "text"][-1])
+        return dane, we, wy, odp.model, odp.stop_reason, szukan

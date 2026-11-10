@@ -55,7 +55,9 @@ def wczytaj_nsp(obszar=None):
 def budynki_w_kwadratach(obszar=None):
     """(budynki z BDOT10k, kwadraty NSP) dla kwadratów przecinających obszar (domyślnie całe miasto).
 
-    Budynki dostają kolumny komorka (kwadrat, w którym leży ich środek) oraz, gdy są mieszkalne i eksploatowane, klasa.
+    Budynki dostają kolumny komorka (kwadrat, w którym leży ich środek), udzialy (słownik kwadrat -> część obrysu budynku
+    w tym kwadracie) oraz, gdy są mieszkalne i eksploatowane, klasa. Spis przypisuje ludzi do punktów adresowych, a długi
+    blok leży w kilku kwadratach, więc jego mieszkańców dzielimy między kwadraty według udziałów.
     """
     nsp = wczytaj_nsp(obszar)
     bud = wczytaj_bdot(nsp.union_all())
@@ -63,14 +65,28 @@ def budynki_w_kwadratach(obszar=None):
     bud["klasa"] = bud.funkcja.map(klasa_bdot).where(mieszkalny)
     srodki = gpd.GeoDataFrame(geometry=bud.centroid, crs=bud.crs)
     bud["komorka"] = gpd.sjoin(srodki, nsp[["geometry"]], predicate="within")["kod"]
+    czesci = gpd.overlay(bud[["geometry"]].reset_index(), nsp[["geometry"]].reset_index(), how="intersection")
+    czesci["udzial"] = czesci.area / czesci["id"].map(bud.area)
+    bud["udzialy"] = czesci.groupby("id")[["kod", "udzial"]].apply(lambda g: dict(zip(g.kod, g.udzial)))
     return bud, nsp
 
 
+def udzialy(bud, ids=None):
+    """Udziały budynków w kwadratach jako seria o indeksie (id, kod); ids ogranicza ją do wybranych budynków."""
+    u = bud.udzialy.dropna() if ids is None else bud.udzialy.reindex(list(ids)).dropna()
+    return pd.Series({(i, kod): w for i, d in u.items() for kod, w in d.items()}, dtype=float).rename_axis(["id", "kod"])
+
+
+def sumy(wartosci, u):
+    """Suma wartości budynków w każdym kwadracie; budynek wnosi do kwadratu tyle, ile wynosi jego udział u."""
+    return (u * wartosci.reindex(u.index.get_level_values("id")).to_numpy()).groupby(level="kod").sum()
+
+
 def kompletne_kwadraty(bud, dostepne):
-    """Kody kwadratów, w których każdy budynek mieszkalny (kolumna klasa z budynki_w_kwadratach) należy do dostepne.
+    """Kody kwadratów, w których każdy budynek mieszkalny (kolumna klasa z budynki_w_kwadratach), choćby częściowo, należy do dostepne.
 
     Tylko w takich kwadratach suma predykcji da się porównać z ludnością; arkusz ucina kwadraty na brzegach.
     """
-    mieszkalne = bud[bud.klasa.notna() & bud.komorka.notna()]
-    pelne = pd.Series(mieszkalne.index.isin(dostepne), index=mieszkalne.index).groupby(mieszkalne.komorka).all()
+    u = udzialy(bud[bud.klasa.notna()])
+    pelne = pd.Series(u.index.get_level_values("id").isin(list(dostepne)), index=u.index).groupby(level="kod").all()
     return pelne.index[pelne]

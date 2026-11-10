@@ -1,4 +1,0 @@
-# Porównanie modeli na tej samej próbce: same obrazy, więc zgodność z BDOT10k nie jest kolista.
-opis = "świadek bez rekordu BDOT10k, rubryka z literatury, Sonnet 5.5"
-z_rekordem = false
-model = "claude-sonnet-5-5"

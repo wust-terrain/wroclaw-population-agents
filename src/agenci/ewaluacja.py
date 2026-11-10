@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 
 from agenci import EKSPERYMENTY, PRZEBIEGI
-from agenci.statystyka import budynki_w_kwadratach, kompletne_kwadraty
+from agenci.statystyka import budynki_w_kwadratach, kompletne_kwadraty, sumy, udzialy
 from ortofoto.arkusze import zasieg
 from ortofoto.budynki import wczytaj_budynki
 
@@ -67,7 +67,7 @@ def sumy_kwadratow(pred, bud, kw, kolumna="mieszkancy"):
     """
     s = pred.dropna(subset=[kolumna]).set_index("budynek")[kolumna]
     kody = kompletne_kwadraty(bud, s.index)
-    suma = s.groupby(bud.komorka.reindex(s.index)).sum().reindex(kody).fillna(0.0)
+    suma = sumy(s, udzialy(bud, s.index)).reindex(kody).fillna(0.0)
     return suma, kw.ludnosc.reindex(kody).astype(float)
 
 
