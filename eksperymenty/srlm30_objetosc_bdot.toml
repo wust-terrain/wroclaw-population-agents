@@ -1,0 +1,6 @@
+# Ocena na SRLM, rejon 30 (Plac Grunwaldzki): baseline bez API, powierzchnia × wysokość z zerem dla niemieszkalnych.
+opis = "SRLM rejon 30, baseline objetosc_bdot"
+estymator = "objetosc_bdot"
+
+[budynki]
+rejon = 30

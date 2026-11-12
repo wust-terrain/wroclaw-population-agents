@@ -20,6 +20,7 @@ from agenci.estymatory import objetosc, objetosc_bdot, ze_wzoru
 from agenci.karta import zbuduj_karte
 from agenci.llm import ROWNOLEGLE, Klient
 from agenci.petla import uzgodnij
+from agenci.srlm import obszar_pracy, wczytaj_srlm
 from agenci.statystyka import budynki_w_kwadratach, kompletne_kwadraty, udzialy
 from agenci.swiadkowie import swiadek_wizualny
 from agenci.szperacz import poszukaj
@@ -38,7 +39,7 @@ class Konfiguracja:
     szukaj: bool = False  # czy szperacz szuka w sieci liczby miejsc albo mieszkań dla największych budynków
     z_rekordem: bool = True  # czy świadek i agent widzą rekord BDOT10k; bez niego kontrola z BDOT10k nie jest kolista
     model: str = "claude-opus-5-5"
-    budynki: dict = field(default_factory=dict)  # wszystkie = true, kwadraty = n albo liczba = n (domyślnie 40); ziarno
+    budynki: dict = field(default_factory=dict)  # wszystkie = true, rejon = numer SRLM, kwadraty = n albo liczba = n (domyślnie 40); ziarno
 
     def __post_init__(self):
         if self.estymator not in (*BASELINE, "wzor", "petla"):
@@ -50,14 +51,20 @@ def wczytaj_konfiguracje(sciezka):
         return Konfiguracja(nazwa=Path(sciezka).stem, **tomllib.load(f))
 
 
+def obszar_konfiguracji(konf):
+    """Wielokąt, na którym działa przebieg: przy `rejon` kwadraty NSP przecinające rejon SRLM, inaczej None (wszystkie arkusze)."""
+    numer = konf.budynki.get("rejon")
+    return None if numer is None else obszar_pracy(wczytaj_srlm([numer]).geometry.iloc[0])
+
+
 def wybierz_budynki(bud, konf):
-    """Lista id budynków: cały arkusz, losowe kompletne kwadraty NSP albo losowa próbka widocznych ze wszystkich kierunków.
+    """Lista id budynków: wszystkie z obszaru rejonu SRLM, cały arkusz, losowe kompletne kwadraty NSP albo losowa próbka widocznych ze wszystkich kierunków.
 
     Tylko cały arkusz i kwadraty pozwalają porównać sumę predykcji z ludnością kwadratu. Cały arkusz obejmuje też budynki
     przy krawędzi bez pełnego widoku, które dostają szacunek z samego rekordu.
     """
     b, ziarno = konf.budynki, konf.budynki.get("ziarno", 0)
-    if b.get("wszystkie"):
+    if b.get("wszystkie") or b.get("rejon") is not None:  # przy rejonie bud jest już ograniczone do obszaru rejonu
         return sorted(bud.index)
     if b.get("kwadraty"):
         miasto = budynki_w_kwadratach(zasieg())[0]
@@ -90,7 +97,8 @@ def _swiadek_i_wzor(klient, bud, ids, z_rekordem):
 
 def uruchom(konf, na_sucho=False):
     """Przebieg eksperymentu; zapisuje wyniki (chyba że na sucho) i zwraca DataFrame predykcji."""
-    bud = wczytaj_budynki()
+    obszar = obszar_konfiguracji(konf)
+    bud = wczytaj_budynki(obszar)
     ids = wybierz_budynki(bud, konf)
     tabele = {}
     koszt = 0.0
@@ -101,7 +109,7 @@ def uruchom(konf, na_sucho=False):
         klient = Klient(konf.model, konf.nazwa, na_sucho)
         pred = _swiadek_i_wzor(klient, bud, ids, konf.z_rekordem)
         if konf.estymator == "petla" and "typ" in pred:  # brak kolumny: wszystkie wywołania padły, błędy są w kolumnie blad
-            pred, tabele["dialog"], tabele["bilans"] = uzgodnij(klient, pred, bud, konf.z_rekordem)
+            pred, tabele["dialog"], tabele["bilans"] = uzgodnij(klient, pred, bud, konf.z_rekordem, obszar)
         if konf.szukaj and "typ" in pred:
             pred = poszukaj(klient, pred, bud)
         koszt = klient.koszt
