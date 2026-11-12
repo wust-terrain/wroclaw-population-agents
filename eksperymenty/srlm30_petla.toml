@@ -1,0 +1,7 @@
+# Ocena na SRLM, rejon 30 (Plac Grunwaldzki): cały system z rekordem BDOT10k, Haiku. Budynki: wszystkie z kwadratów NSP przecinających rejon.
+opis = "SRLM rejon 30, rekord BDOT10k i obrazy, pętla, Haiku 5.5"
+estymator = "petla"
+model = "claude-haiku-5-5"
+
+[budynki]
+rejon = 30

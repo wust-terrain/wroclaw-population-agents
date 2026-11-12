@@ -37,6 +37,8 @@ uv run python -m agenci.ewaluacja   # porównanie przebiegów
 uv run pytest
 ```
 
+Ocena na SRLM (szacowana rzeczywista liczba mieszkańców w rejonach komunikacyjnych, `data/SRLM/`): `[budynki] rejon = 30` bierze wszystkie budynki z kwadratów NSP przecinających rejon SRLM o tym numerze (30 to Plac Grunwaldzki), a `uv run python -m agenci.ewaluacja --rejon 30` porównuje sumy przebiegów z SRLM (budynek przy granicy dzieli się wg obrysu). Gotowe konfiguracje: `eksperymenty/srlm30_*.toml`. Potrzeba arkuszy ortofotomapy pokrywających rejon.
+
 Wyniki trafiają do `wyniki/eksperymenty/`: `<przebieg>.csv` (jeden wiersz na budynek), `__dialog.csv` (rozmowa agentów), `__bilans.csv` (kwadraty po rundach). Odpowiedzi modeli zostają w `wyniki/eksperymenty.sqlite`, więc powtórka jest darmowa, chyba że zmieni się prompt. Katalogu `wyniki/` nie ma w gicie.
 
 ## Jak wyglądają dane
