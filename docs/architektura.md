@@ -19,7 +19,7 @@ Model dostaje do 8 obrazów, każdy z podpisem, np. `Widok N: kamera patrzy na p
 
 | Wynik w `wyniki/` | Wiersz | Główne kolumny |
 | --- | --- | --- |
-| `eksperymenty/<przebieg>.csv` | budynek | `budynek`, `mieszkancy` (wynik), `blad` (wyjątek); z modelem też obserwacja i `koszt_usd`; z pętlą też `typ_r0` itd. (przed pętlą), `mieszkancy_r0`, `_r1`, `_r2`, `dopytany`, `zmieniony`, `nowa_zabudowa` |
+| `eksperymenty/<przebieg>.csv` | budynek | `budynek`, `mieszkancy` (wynik; w baseline'ach `objetosc_m3`), `blad` (wyjątek); z modelem też obserwacja i `koszt_usd`; z pętlą też `typ_r0` itd. (przed pętlą), `mieszkancy_r0`, `_r1`, `_r2`, `dopytany`, `zmieniony`, `nowa_zabudowa` |
 | `…__bilans.csv` | kwadrat po rundzie | `kod`, `ludnosc`, `szacunek` (po skali), `iloraz`, `flaga`, `runda` (stan po tylu rundach, 0: przed pętlą) |
 | `…__dialog.csv` | zdarzenie rozmowy | `runda`, `rodzaj` (`kwadrat`, `pytanie`, `nowa_zabudowa`), `kod`, `diagnoza`, `uzasadnienie`, `budynek`, `atrybut`, `pytanie`, `odpowiedz`, `zmiana`, `mieszkancy_przed`, `_po` |
 | `eksperymenty.sqlite` | wywołanie modelu | `rola`, `prompt`, `odpowiedz`, tokeny, koszt, czas |
@@ -89,13 +89,13 @@ Stan inny niż `uzytkowany` też daje 0. Powierzchnia i kondygnacje pochodzą z 
 
 | Plik (domyślnie w `src/agenci/`) | Co tam jest, co tu zmienisz |
 | --- | --- |
-| `src/ortofoto/` | `arkusze.py`: TIF-y; `budynki.py`: BDOT10k, wysokość z LiDAR-u, adres z OSM; `wycinki.py`: wycinki, fasady, przesunięcie dachu `K` |
+| `src/ortofoto/` | `arkusze.py`: TIF-y; `pobierz.py`: arkusze ze skorowidza GUGiK; `budynki.py`: BDOT10k, wysokość z LiDAR-u, adresy z OSM; `wycinki.py`: wycinki, fasady, przesunięcie dachu `K` |
 | `karta.py` | `Karta`, kolory obrysów |
 | `llm.py` | `Klient`: dostawca modelu, pamięć odpowiedzi, `CENY` |
 | `swiadkowie.py` | prompt i schemat świadka, `TYPY`, `dopytaj_swiadka` |
 | `estymatory.py` | `ze_wzoru`, `klasa`, rubryka (`OSOBY_NA_DOM`, `M2_NA_OSOBE`), baseline'y: tu dopisujesz nowy (funkcja karta → liczba) |
 | `statystyka.py` | NSP 2021, kwadraty i udziały budynków w kwadratach |
 | `petla.py` | `bilans`, `sprzeczny`, `wazne_pytania`, `uzgodnij`, prompt agenta; `PROG_ILORAZU` 1,5, `MIN_OSOB` 25, `RUNDY` 2, `MAX_PYTAN` 20 |
-| `szperacz.py` | wybór budynków, prompt szperacza, `z_sieci`; `MAX_BUDYNKOW` 4, `MAX_WYSZUKAN` 2 |
+| `szperacz.py` | wybór budynków, prompt szperacza, `z_sieci`; `NA_ARKUSZ` 4 budynki na arkusz, `MAX_WYSZUKAN` 2 |
 | `eksperyment.py` | `Konfiguracja` (pola TOML), rejestr baseline'ów `BASELINE` |
 | `ewaluacja.py` | zgodność z BDOT10k, sumy w kwadratach, bootstrap |

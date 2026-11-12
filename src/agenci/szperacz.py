@@ -9,11 +9,13 @@ o tym konkretnym budynku.
 from concurrent.futures import ThreadPoolExecutor
 
 from pyproj import Transformer
+from shapely.geometry import box
 
 from agenci.estymatory import OSOBY_NA_MIESZKANIE
 from agenci.llm import ROWNOLEGLE, tekst
+from ortofoto.arkusze import ARKUSZE, KOLEJNOSC
 
-MAX_BUDYNKOW = 4  # najwięcej tyle budynków w przebiegu (limit kosztu)
+NA_ARKUSZ = 4  # najwięcej tyle budynków z jednego arkusza (limit kosztu)
 MAX_WYSZUKAN = 2  # najwięcej tyle zapytań do wyszukiwarki na budynek
 KOLUMNY = ["szukany", "znalezione", "liczba_z_sieci", "zrodlo", "cytat"]
 
@@ -42,18 +44,22 @@ SYSTEM = (
     "- cytat: zdanie ze źródła, w którym pada ta liczba, a przy braku krótko, czego szukałeś.")
 
 
-def wybierz(pred):
-    """Budynki do sprawdzenia: zamieszkanie zbiorowe i największe szacunki, razem najwyżej MAX_BUDYNKOW."""
+def wybierz(pred, bud):
+    """Budynki do sprawdzenia: z każdego arkusza najwyżej NA_ARKUSZ, najpierw zamieszkanie zbiorowe, potem największe szacunki."""
     p = pred[pred.mieszkancy > 0].sort_values("mieszkancy", ascending=False)
-    return list(p.sort_values("typ", key=lambda t: t != "zbiorowy", kind="stable").budynek.head(MAX_BUDYNKOW))
+    kolejka = p.sort_values("typ", key=lambda t: t != "zbiorowy", kind="stable").budynek
+    srodki = bud.geometry.centroid.reindex(kolejka)
+    return [i for arkusz in ARKUSZE[KOLEJNOSC[0]] for i in kolejka[srodki.within(box(*arkusz.bounds)).to_numpy()].head(NA_ARKUSZ)]
 
 
 def opis(b, wiersz, bud):
-    """Treść pytania o jeden budynek: adres i nazwa z OSM i BDOT10k, rekord oraz typ od świadka."""
+    """Treść pytania o jeden budynek: adresy z OSM, nazwa i rekord z BDOT10k oraz typ od świadka."""
     lon, lat = Transformer.from_crs(2177, 4326, always_xy=True).transform(b.geometry.centroid.x, b.geometry.centroid.y)
-    if isinstance(b["addr:street"], str):
+    if isinstance(b.adresy, str):  # punkty adresowe w obrysie; blok z kilkoma klatkami ma ich kilka
+        adres = f"Adres: {b.adresy}, Wrocław"
+    elif isinstance(b["addr:street"], str):
         adres = f"Adres: {b['addr:street']} {b['addr:housenumber']}, Wrocław"
-    else:  # OSM nie ma adresu tego budynku, więc podajemy adres najbliższego budynku, który go ma
+    else:  # brak adresu, więc podajemy adres najbliższego budynku, który go ma
         z_adresem = bud[bud["addr:street"].notna()]
         sasiad = z_adresem.loc[z_adresem.distance(b.geometry).idxmin()]
         adres = (f"Adres nieznany; najbliższy budynek z adresem ({sasiad.geometry.distance(b.geometry):.0f} m dalej): "
@@ -77,7 +83,7 @@ def z_sieci(dane):
 def poszukaj(klient, pred, bud):
     """Predykcje z kolumnami szperacza; mieszkancy_wzor zachowuje szacunek sprzed szukania, mieszkancy bierze liczbę z sieci."""
     wiersze = pred.set_index("budynek")
-    ids = wybierz(pred)
+    ids = wybierz(pred, bud)
 
     def jeden(i):
         return klient.zapytaj(rola="szperacz", system=SYSTEM, tresc=[tekst(opis(bud.loc[i], wiersze.loc[i], bud))], schemat=SCHEMAT,

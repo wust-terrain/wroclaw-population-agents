@@ -96,7 +96,7 @@ def uruchom(konf, na_sucho=False):
     koszt = 0.0
     if konf.estymator in BASELINE:
         policz = BASELINE[konf.estymator]
-        pred = pd.DataFrame({"budynek": ids, "mieszkancy": [policz(zbuduj_karte(bud.loc[i], obrazy=False)) for i in ids], "blad": None})
+        pred = pd.DataFrame({"budynek": ids, "objetosc_m3": [policz(zbuduj_karte(bud.loc[i], obrazy=False)) for i in ids], "blad": None})
     else:
         klient = Klient(konf.model, konf.nazwa, na_sucho)
         pred = _swiadek_i_wzor(klient, bud, ids, konf.z_rekordem)

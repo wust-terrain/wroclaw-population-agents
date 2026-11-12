@@ -1,0 +1,6 @@
+# Baseline na 5 arkuszach: sama objętość z obrysu i wysokości, bez modelu.
+opis = "5 arkuszy: objętość"
+estymator = "objetosc"
+
+[budynki]
+wszystkie = true

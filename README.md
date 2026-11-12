@@ -4,16 +4,16 @@ Szacujemy, ile osób mieszka w każdym budynku we Wrocławiu. Zakładamy, że mo
 
 Model widzący obrazy (VLM), czyli świadek, opisuje budynek ze zdjęć lotniczych z 4 stron świata, a liczbę mieszkańców liczy z tego wzór ze stałymi z literatury. Drugi model, agent bilansujący, dostaje rozjazdy ze spisem i dopytuje świadka.
 
-Działamy na jednym arkuszu ortofotomapy: 800 × 500 m, 341 budynków. Pilot na tanim modelu Claude Haiku pokazał, że kod działa, ale nie to, że szacunki są trafne. Docelowo system ma działać na otwartym modelu, np. Qwen, który uruchomimy jak będziemy mieć serwer. Architektura: `docs/architektura.md`, pełne prompty: `src/agenci/`, stan prac: `paper/population-estimation.tex`, wykresy: `notebooks/`.
+Pilot to jeden arkusz ortofotomapy (800 × 500 m, 341 budynków), a pierwszy większy przebieg to 5 arkuszy (1044 budynki). Pilot na tanim modelu Claude Haiku pokazał, że kod działa, ale nie to, że szacunki są trafne. Docelowo system ma działać na otwartym modelu, np. Qwen, który uruchomimy jak będziemy mieć serwer. Architektura: `docs/architektura.md`, pełne prompty: `src/agenci/`, stan prac: `paper/population-estimation.tex`, wykresy: `notebooks/`.
 
 ## Instalacja i dane
 
 Python 3.12+: `uv sync` albo `pip install -e .` (wtedy bez `uv run`).
 
-Pobierz ortofotomapę z [geoportal.gov.pl](https://www.geoportal.gov.pl), BDOT10k z [geoportalu Dolnego Śląska](https://geoportal.dolnyslask.pl/imap/#gpmap=gp103), a `Grid_125_XLS.zip` z [ATOM GRID w GUS](https://geo.stat.gov.pl/atom-web/atom/GRID?spatial_dataset_identifier_code=GRID_2021_125m_xls&spatial_dataset_identifier_namespace=GRID), rozpakuj i ułóż tak, bez zmiany nazw:
+Arkusze ortofotomapy pobiera `uv run python -m ortofoto.pobierz <godło> ...` (np. `6.148.12.04.2`), BDOT10k z [geoportalu Dolnego Śląska](https://geoportal.dolnyslask.pl/imap/#gpmap=gp103), a `Grid_125_XLS.zip` z [ATOM GRID w GUS](https://geo.stat.gov.pl/atom-web/atom/GRID?spatial_dataset_identifier_code=GRID_2021_125m_xls&spatial_dataset_identifier_namespace=GRID), rozpakuj i ułóż tak, bez zmiany nazw:
 
 ```text
-data/*_6.148.12.04.2_{N,E,S,W}.tif               ok. 80 MB każdy
+data/*_<godło>_{N,E,S,W}.tif                    ok. 80 MB każdy
 data/*/BDOT10K/PL.PZGiK.337.0264__OT_BUBD_A.xml  powiat 0264, ok. 320 MB
 data/populacja/Grid_125_{1,2}.xlsx
 ```
@@ -46,7 +46,7 @@ Wyniki trafiają do `wyniki/eksperymenty/`: `<przebieg>.csv` (jeden wiersz na bu
 | Ortofotomapa skośna | Cztery pliki TIF czyli cztery fotografie z kierunków N, S, W, E, piksel to 5 cm, jeden TIF to 500m x 800m | obrazy dla modelu |
 | BDOT10k | Państwowa baza budynków z różnymi danymi o nich | obrys (stąd powierzchnia), funkcja, kondygnacje, stan |
 | NMPT i NMT (GUGiK) | Wysokość powierzchni z dachami i samego terenu ze skaningu laserowego (LiDAR), piksel 0,5 m i 1 m | wysokość budynku |
-| OpenStreetMap | Otwarta mapa | adres budynku |
+| OpenStreetMap | Otwarta mapa, obrysy i punkty adresowe | adres budynku |
 | NSP 2021 | Spis powszechny, liczba osób w kwadracie 15m x 125m | gdy jest duża rozbieżność między spisem a sumą dla budynków w kwadracie to odpalamy agenta bilansującego |
 
 Spis przypisuje ludzi do punktów adresowych, a długi blok leży w kilku kwadratach, więc mieszkańców budynku dzielimy między kwadraty według tego, jaka część jego obrysu leży w każdym. Kwadraty na brzegach się ucinają więc dopóki działamy na jednym arkuszu to te kwadraty których wszystkie budynki mieszkalne leżą na arkuszu.
@@ -110,9 +110,9 @@ W pilocie flagę ma 1 z 14 kwadratów, ten z przykładu. Agent zapytał o 7 budy
 
 ## Szperacz
 
-Większość ludzi i błędu siedzi w kilku dużych budynkach. Przy `szukaj = true` model z wyszukiwarką internetową (szperacz) dostaje adres i rekord najwyżej 4 budynków: najpierw typu `zbiorowy`, potem tych z największym szacunkiem. Szuka liczby miejsc albo mieszkań podanej dla tego konkretnego budynku, najwyżej 2 zapytaniami. Liczba miejsc zastępuje szacunek, a liczbę mieszkań mnożymy przez 1,71 osoby (GUS, Wrocław, 2024). Bez źródła zostaje wynik wzoru (`mieszkancy_wzor`); stronę i zdanie z liczbą zapisujemy w `zrodlo` i `cytat`.
+Większość ludzi i błędu siedzi w kilku dużych budynkach. Przy `szukaj = true` model z wyszukiwarką internetową (szperacz) dostaje adresy i rekord najwyżej 4 budynków z każdego arkusza: najpierw typu `zbiorowy`, potem tych z największym szacunkiem. Szuka liczby miejsc albo mieszkań podanej dla tego konkretnego budynku, najwyżej 2 zapytaniami. Liczba miejsc zastępuje szacunek, a liczbę mieszkań mnożymy przez 1,71 osoby (GUS, Wrocław, 2024). Bez źródła zostaje wynik wzoru (`mieszkancy_wzor`); stronę i zdanie z liczbą zapisujemy w `zrodlo` i `cytat`.
 
-W próbie na arkuszu (4 budynki, 0,09 USD) szperacz nie znalazł żadnej liczby. Adres w OSM ma 93 z 341 budynków i żaden z tych czterech, a adres najbliższego sąsiada prowadził do innych obiektów.
+Na 5 arkuszach (20 budynków, 0,43 USD) szperacz znalazł liczbę dla 6, np. 802 miejsca w akademiku przy Piastowskiej 1. Dwa trafienia są wątpliwe (wiersz tabeli bez nagłówka, miejsca dla turystów), więc źródła trzeba przejrzeć; wyniki są w `notebooks/piec_arkuszy.ipynb`.
 
 ## Co sprawdzamy
 

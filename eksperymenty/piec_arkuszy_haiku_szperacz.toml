@@ -1,0 +1,8 @@
+# Jak piec_arkuszy_haiku, ale bez pętli i ze szperaczem: najwyżej 4 budynki z każdego arkusza.
+opis = "5 arkuszy: rekord BDOT10k i obrazy, rubryka z literatury, szperacz, Haiku 5.5"
+estymator = "wzor"
+szukaj = true
+model = "claude-haiku-5-5"
+
+[budynki]
+wszystkie = true

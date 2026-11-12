@@ -3,7 +3,8 @@
 BDOT10k (warstwa OT_BUBD_A, obrysy z ewidencji gruntów i budynków) to główne źródło: każdy budynek
 ma tam funkcję (np. budynek wielorodzinny), liczbę kondygnacji i stan (eksploatowany, w budowie...).
 Wysokość to różnica dwóch rastrów GUGiK ze skaningu laserowego (LiDAR): NMPT (powierzchnia z dachami, piksel 0,5 m)
-i NMT (sam teren, 1 m). Z OSM dołączamy adres tam, gdzie obrys OSM pokrywa co najmniej połowę obrysu BDOT.
+i NMT (sam teren, 1 m). Z OSM dołączamy adres tam, gdzie obrys OSM pokrywa co najmniej połowę obrysu BDOT,
+a brakujący adres bierzemy z punktu adresowego OSM leżącego w obrysie.
 """
 
 import json
@@ -18,7 +19,7 @@ import pyogrio
 import rasterio
 import rasterio.mask
 from pyproj import Transformer
-from shapely.geometry import Polygon
+from shapely.geometry import Point, Polygon
 
 from ortofoto import DATA
 from ortofoto.arkusze import zasieg
@@ -62,6 +63,33 @@ def wczytaj_osm(obszar=None):
     osm["kondygnacje_osm"] = pd.to_numeric(osm["building:levels"], errors="coerce")
     osm["h_osm"] = pd.to_numeric(osm["height"].astype(str).str.replace(",", "."), errors="coerce")
     return osm[osm.centroid.within(obszar)]
+
+
+def wczytaj_adresy(obszar=None):
+    """Punkty adresowe z OSM (węzły z numerem domu, w Polsce głównie z importu PRG): kolumny ulica, numer; EPSG:2177."""
+    obszar = obszar if obszar is not None else zasieg()
+    x0, y0, x1, y1 = (round(v) for v in obszar.bounds)
+    plik = DATA / f"osm_adresy_{x0}_{y0}_{x1}_{y1}.geojson"
+    if not plik.exists():
+        lon, lat = Transformer.from_crs(2177, 4326, always_xy=True).transform(*np.array(obszar.envelope.exterior.coords).T)
+        zapytanie = f'[out:json][timeout:90];node["addr:housenumber"]({lat.min()},{lon.min()},{lat.max()},{lon.max()});out;'
+        wiersze = [{"ulica": e["tags"].get("addr:street") or e["tags"].get("addr:place"), "numer": e["tags"]["addr:housenumber"],
+                    "geometry": Point(e["lon"], e["lat"])} for e in _zapytaj(zapytanie)]
+        gpd.GeoDataFrame(wiersze, crs=4326).to_file(plik, driver="GeoJSON")
+    adresy = gpd.read_file(plik).to_crs(2177)
+    return adresy[adresy.ulica.notna()]
+
+
+def _dolacz_adresy(bud, adresy):
+    """Uzupełnia brakujący adres OSM punktem adresowym leżącym w obrysie; kolumna adresy ma wszystkie adresy budynku."""
+    pkt = gpd.sjoin(adresy, bud[["geometry"]].rename_axis("budynek").reset_index(), predicate="within")
+    pkt = pkt.drop_duplicates(["budynek", "ulica", "numer"]).sort_values(["ulica", "numer"])
+    bud["adresy"] = pkt.groupby("budynek").apply(lambda p: ", ".join(p.ulica + " " + p.numer))
+    pierwszy = pkt.groupby("budynek").first()
+    brak = bud["addr:street"].isna()
+    bud.loc[brak, "addr:street"] = pierwszy.ulica.reindex(bud.index[brak])
+    bud.loc[brak, "addr:housenumber"] = pierwszy.numer.reindex(bud.index[brak])
+    return bud
 
 
 def model_wysokosci(nazwa, obszar=None):
@@ -151,7 +179,7 @@ def wczytaj_budynki(obszar=None):
     osm = wczytaj_osm(obszar)
     bud["osm_id"] = _dopasuj_osm(bud, osm).astype("Int64")
     kolumny_osm = ["building", "addr:street", "addr:housenumber", "kondygnacje_osm", "h_osm"]
-    bud = bud.join(osm[kolumny_osm], on="osm_id")
+    bud = _dolacz_adresy(bud.join(osm[kolumny_osm], on="osm_id"), wczytaj_adresy(obszar))
     bud["mieszkalny_bdot"] = bud.funkcja_ogolna == "budynki mieszkalne"
     kond = bud.kondygnacje.fillna(bud.kondygnacje_osm)
     lidar = wysokosc_lidar(bud, obszar).reindex(bud.index)

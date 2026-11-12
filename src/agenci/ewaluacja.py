@@ -26,6 +26,11 @@ def wczytaj(nazwa):
     return pd.read_csv(PRZEBIEGI / f"{nazwa}.csv", dtype={"budynek": str})
 
 
+def kolumna(pred):
+    """Kolumna z predykcją: mieszkancy albo, w baseline'ach, objetosc_m3. Ewaluacja i tak skaluje sumę do spisu, więc obie się nadają."""
+    return "mieszkancy" if "mieszkancy" in pred else "objetosc_m3"
+
+
 def zgodnosc_z_bdot(pred, bud):
     """Kondygnacje świadka a BDOT10k oraz 'mieszkańcy > 0' a 'mieszkalny i eksploatowany' w BDOT10k."""
     ref = pd.DataFrame({"kond_bdot": bud.kondygnacje, "mieszkalny": bud.mieszkalny_bdot & (bud.kategoria == "eksploatowany")})
@@ -34,8 +39,8 @@ def zgodnosc_z_bdot(pred, bud):
     if "kondygnacje" in p:
         k = p.dropna(subset=["kondygnacje", "kond_bdot"])
         wynik |= {"kond_mae": (k.kondygnacje - k.kond_bdot).abs().mean(), "kond_trafne": (k.kondygnacje == k.kond_bdot).mean()}
-    znane = p.dropna(subset=["mieszkancy"])
-    prawda, przewidziane = znane.mieszkalny.astype(bool), znane.mieszkancy > 0
+    znane = p.dropna(subset=[kolumna(p)])
+    prawda, przewidziane = znane.mieszkalny.astype(bool), znane[kolumna(p)] > 0
     tp = (prawda & przewidziane).sum()
     return wynik | {"mieszk_trafnosc": (prawda == przewidziane).mean(),
                     "mieszk_f1": 2 * tp / (prawda.sum() + przewidziane.sum()) if tp else 0.0}
@@ -60,20 +65,21 @@ def przedzial(statystyka, n):
     return tuple(np.nanquantile([statystyka(rng.integers(0, n, n)) for _ in range(BOOTSTRAP)], [0.025, 0.975]))
 
 
-def sumy_kwadratow(pred, bud, kw, kolumna="mieszkancy"):
+def sumy_kwadratow(pred, bud, kw, kol=None):
     """Suma predykcji i ludność NSP w kwadratach, w których predykcję ma każdy budynek mieszkalny.
 
     bud i kw jak z budynki_w_kwadratach; budynki niemieszkalne w BDOT10k też się liczą, jeśli świadek dał im mieszkańców.
     """
-    s = pred.dropna(subset=[kolumna]).set_index("budynek")[kolumna]
+    kol = kol or kolumna(pred)
+    s = pred.dropna(subset=[kol]).set_index("budynek")[kol]
     kody = kompletne_kwadraty(bud, s.index)
     suma = sumy(s, udzialy(bud, s.index)).reindex(kody).fillna(0.0)
     return suma, kw.ludnosc.reindex(kody).astype(float)
 
 
-def ocena_kwadratow(pred, bud, kw, kolumna="mieszkancy"):
+def ocena_kwadratow(pred, bud, kw, kol=None):
     """Spearman i WAPE sum w kwadratach, z przedziałami; z mniej niż trzech kwadratów rangi nic nie mówią."""
-    suma, ref = sumy_kwadratow(pred, bud, kw, kolumna)
+    suma, ref = sumy_kwadratow(pred, bud, kw, kol)
     a, b = suma.to_numpy(float), ref.to_numpy(float)
     wynik = {"n_kwadratow": len(a)}
     if len(a) >= 3:
@@ -102,10 +108,11 @@ def podsumowanie():
     for plik in sorted(EKSPERYMENTY.glob("*.toml")):
         if (PRZEBIEGI / f"{plik.stem}.csv").exists():
             p = wczytaj(plik.stem)
-            ok = p[p.mieszkancy.notna()]
-            kolumna = "mieszkancy_r0" if "mieszkancy_r0" in p else "mieszkancy"
+            ok = p[p[kolumna(p)].notna()]
+            kol = "mieszkancy_r0" if "mieszkancy_r0" in p else kolumna(p)
             wiersze.append({"przebieg": plik.stem, "budynki": len(p), "bledy": int(p.blad.notna().sum()), "usd": p.get("koszt_usd", pd.Series([0.0])).sum(),
-                            "suma_mieszkancow": ok.mieszkancy.sum(), **zgodnosc_z_bdot(ok, bud), **ocena_kwadratow(ok, miasto, kw, kolumna)})
+                            "suma_mieszkancow": ok.mieszkancy.sum() if "mieszkancy" in ok else np.nan,
+                            **zgodnosc_z_bdot(ok, bud), **ocena_kwadratow(ok, miasto, kw, kol)})
     return pd.DataFrame(wiersze).set_index("przebieg")
 
 
