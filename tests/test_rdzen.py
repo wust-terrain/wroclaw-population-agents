@@ -60,3 +60,13 @@ def test_suma_w_rejonach_dzieli_budynek_na_granicy():
     s = suma_w_rejonach(pd.Series({"w": 10.0, "g": 100.0}), bud, rejony)
     assert s.to_dict() == {30: 10.0 + 50.0, 31: 50.0}  # "g" leży po połowie w obu rejonach
     assert s.sum() == 110.0
+
+
+def test_paczki_dziela_kwadraty_i_sprzeczne():
+    from agenci.petla import PACZKA, PACZKA_SPRZECZNYCH, _paczki
+
+    assert _paczki(["k1", "k2"], ["s1"]) == [(["k1", "k2"], ["s1"])]  # mały przebieg: jedno wywołanie
+    kody, sprz = [f"k{i}" for i in range(PACZKA + 1)], [f"s{i}" for i in range(PACZKA_SPRZECZNYCH + 1)]
+    p = _paczki(kody, sprz)
+    assert [len(k) for k, _ in p] == [PACZKA, 1, 0] and [len(s) for _, s in p] == [0, PACZKA_SPRZECZNYCH, 1]
+    assert _paczki([], []) == []

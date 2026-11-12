@@ -8,6 +8,7 @@ i <nazwa>__bilans.csv. Konfiguracje z tym samym [budynki] dostają te same budyn
 """
 
 import argparse
+import time
 import tomllib
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -39,6 +40,7 @@ class Konfiguracja:
     szukaj: bool = False  # czy szperacz szuka w sieci liczby miejsc albo mieszkań dla największych budynków
     z_rekordem: bool = True  # czy świadek i agent widzą rekord BDOT10k; bez niego kontrola z BDOT10k nie jest kolista
     model: str = "claude-opus-5-5"
+    model_szperacza: str | None = None  # szperacz potrzebuje wyszukiwarki z API Claude; None = ten sam model co reszta
     budynki: dict = field(default_factory=dict)  # wszystkie = true, rejon = numer SRLM, kwadraty = n albo liczba = n (domyślnie 40); ziarno
 
     def __post_init__(self):
@@ -91,8 +93,13 @@ def _swiadek_i_wzor(klient, bud, ids, z_rekordem):
             wiersz["blad"] = f"{type(e).__name__}: {e}"[:300]
         return wiersz
 
+    wiersze, start = [], time.perf_counter()
     with ThreadPoolExecutor(ROWNOLEGLE) as ex:
-        return pd.DataFrame(list(ex.map(jeden, ids)))
+        for n, w in enumerate(ex.map(jeden, ids), 1):
+            wiersze.append(w)
+            if n % 500 == 0 or n == len(ids):  # długi przebieg: postęp co 500 budynków
+                print(f"świadek: {n}/{len(ids)} budynków, {(time.perf_counter() - start) / 60:.0f} min", flush=True)
+    return pd.DataFrame(wiersze)
 
 
 def uruchom(konf, na_sucho=False):
@@ -110,9 +117,10 @@ def uruchom(konf, na_sucho=False):
         pred = _swiadek_i_wzor(klient, bud, ids, konf.z_rekordem)
         if konf.estymator == "petla" and "typ" in pred:  # brak kolumny: wszystkie wywołania padły, błędy są w kolumnie blad
             pred, tabele["dialog"], tabele["bilans"] = uzgodnij(klient, pred, bud, konf.z_rekordem, obszar)
+        szperacz = Klient(konf.model_szperacza, konf.nazwa, na_sucho) if konf.model_szperacza else klient
         if konf.szukaj and "typ" in pred:
-            pred = poszukaj(klient, pred, bud)
-        koszt = klient.koszt
+            pred = poszukaj(szperacz, pred, bud)
+        koszt = klient.koszt + (szperacz.koszt if szperacz is not klient else 0.0)
 
     if not na_sucho:
         PRZEBIEGI.mkdir(parents=True, exist_ok=True)

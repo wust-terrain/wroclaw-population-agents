@@ -4,7 +4,7 @@ Szacujemy, ile osób mieszka w każdym budynku we Wrocławiu. Zakładamy, że mo
 
 Model widzący obrazy (VLM), czyli świadek, opisuje budynek ze zdjęć lotniczych z 4 stron świata, a liczbę mieszkańców liczy z tego wzór ze stałymi z literatury. Drugi model, agent bilansujący, dostaje rozjazdy ze spisem i dopytuje świadka.
 
-Pilot to jeden arkusz ortofotomapy (800 × 500 m, 341 budynków), a pierwszy większy przebieg to 5 arkuszy (1044 budynki). Pilot na tanim modelu Claude Haiku pokazał, że kod działa, ale nie to, że szacunki są trafne. Docelowo system ma działać na otwartym modelu, np. Qwen, który uruchomimy jak będziemy mieć serwer. Architektura: `docs/architektura.md`, pełne prompty: `src/agenci/`, stan prac: `paper/population-estimation.tex`, wykresy: `notebooks/`.
+Pilot to jeden arkusz ortofotomapy (800 × 500 m, 341 budynków), a największy dotąd przebieg to 5 arkuszy (1044 budynki) na tanim modelu Claude Haiku. Docelowo cały Wrocław (826 arkuszy, ok. 70 tys. budynków) przejdzie przez otwarty Qwen3.8-27B na własnym serwerze, a wynik ocenimy na końcu na SRLM, szacowanej rzeczywistej liczbie mieszkańców w 375 rejonach; instrukcja: `docs/serwer.md`. Architektura: `docs/architektura.md`, pełne prompty: `src/agenci/`, stan prac: `paper/population-estimation.tex`, wykresy: `notebooks/`.
 
 ## Instalacja i dane
 
@@ -37,7 +37,7 @@ uv run python -m agenci.ewaluacja   # porównanie przebiegów
 uv run pytest
 ```
 
-Ocena na SRLM (szacowana rzeczywista liczba mieszkańców w rejonach komunikacyjnych, `data/SRLM/`): `[budynki] rejon = 30` bierze wszystkie budynki z kwadratów NSP przecinających rejon SRLM o tym numerze (30 to Plac Grunwaldzki), a `uv run python -m agenci.ewaluacja --rejon 30` porównuje sumy przebiegów z SRLM (budynek przy granicy dzieli się wg obrysu). Gotowe konfiguracje: `eksperymenty/srlm30_*.toml`. Potrzeba arkuszy ortofotomapy pokrywających rejon.
+Ocena na końcu: `uv run python -m agenci.ewaluacja --srlm` porównuje każdy przebieg z SRLM, czyli szacowaną rzeczywistą liczbą mieszkańców w 375 rejonach komunikacyjnych (raport UWr dla UMW, 2023, w BIP UMW; plik do `data/SRLM/`). SRLM liczy też niezameldowanych, więc jest o ok. 33% wyższy od NSP 2021. Oceniamy rejony, których co najmniej 95% powierzchni mieszkalnej ma predykcję; baseline dostaje ludność NSP rozłożoną wg objętości. `[budynki] rejon = 30` zawęża przebieg do kwadratów NSP przecinających rejon 30 (`eksperymenty/srlm30_*.toml`).
 
 Wyniki trafiają do `wyniki/eksperymenty/`: `<przebieg>.csv` (jeden wiersz na budynek), `__dialog.csv` (rozmowa agentów), `__bilans.csv` (kwadraty po rundach). Odpowiedzi modeli zostają w `wyniki/eksperymenty.sqlite`, więc powtórka jest darmowa, chyba że zmieni się prompt. Katalogu `wyniki/` nie ma w gicie.
 
@@ -104,7 +104,7 @@ Kwadrat dostaje flagę, gdy szacunek po skalowaniu do spisu różni się od nieg
 
 Agent nie widzi zdjęć. Czyta opisy takich budynków i wybiera, o co zapytać świadka. To jego jedyny wpływ na wynik, bo liczb nie zmienia, a diagnozy trafiają tylko do zapisu.
 
-Filtr w kodzie przepuszcza pytania tylko o te budynki, jedno na budynek w rundzie, bez powtórek, najwyżej 20 (limit kosztu), i wycina z nich cyfry, żeby świadek nie poznał liczb ze spisu. Świadek ma zmienić zdanie tylko wtedy, gdy uzasadnia to obraz, a wzór liczy wszystko od nowa. Rundy są najwyżej 2 (Du i in. 2024).
+Filtr w kodzie przepuszcza pytania tylko o te budynki, jedno na budynek w rundzie, bez powtórek, najwyżej 20 z jednego wywołania agenta (limit kosztu; agent dostaje kwadraty w paczkach po 25), i wycina z nich cyfry, żeby świadek nie poznał liczb ze spisu. Świadek ma zmienić zdanie tylko wtedy, gdy uzasadnia to obraz, a wzór liczy wszystko od nowa. Rundy są najwyżej 2 (Du i in. 2024).
 
 W pilocie flagę ma 1 z 14 kwadratów, ten z przykładu. Agent zapytał o 7 budynków, a świadek zmienił 2 opisy, w tym blok opisany wcześniej jako usługi. Suma arkusza wzrosła z 8921 do 8942 osób. Wynik końcowy to kolumna `mieszkancy`, a stan sprzed pętli to `mieszkancy_r0`.
 
@@ -124,7 +124,9 @@ Opis budynku porównujemy z BDOT10k: F1 dla pytania "czy ktoś tu mieszka" i bł
 
 Agent w pętli widział sumy kwadratów, dlatego oceniamy `mieszkancy_r0`, choć wynikiem końcowym jest `mieszkancy`. Czy pętla pomaga, jeszcze nie wiemy: uczciwy test to zgodność z BDOT10k przed pętlą i po niej przy `z_rekordem = false`.
 
-Pilot `arkusz_haiku` (rekord widoczny, 14 kwadratów, 0,31 USD): Haiku przed pętlą ma Spearmana 0,89 i WAPE 0,17, a objętość z BDOT10k 0,84 i 0,21. Różnica to +0,05 [0,00; +0,21] w Spearmanie i -0,03 [-0,09; +0,03] w WAPE. Oba przedziały sięgają zera, więc przewagi nie mamy. Nie wiemy też, czy pomagają obrazy, bo świadka bez obrazów jeszcze nie ma.
+Na 5 arkuszach (`piec_arkuszy_haiku`, rekord widoczny, 82 kwadraty, 1,12 USD) Haiku przed pętlą ma Spearmana 0,86 i WAPE 0,28, a objętość z BDOT10k 0,89 i 0,29. Różnica to -0,04 [-0,10; +0,01] w Spearmanie i -0,01 [-0,05; +0,05] w WAPE, więc ze spisem obie metody zgadzają się tak samo. Nie wiemy też, czy pomagają obrazy, bo świadka bez obrazów jeszcze nie ma.
+
+Na końcu porównujemy sumy z SRLM (`--srlm`): raport Uniwersytetu Wrocławskiego dla UMW liczy z meldunków, lokali i miejsc w akademikach także niezameldowanych, więc dla miasta wychodzi 893 506 osób, o ok. 33% więcej niż w spisie. SRLM nie widzi żaden agent. Na 5 arkuszach co najmniej 95% powierzchni mieszkalnej mają tylko 5 rejonów: Haiku daje tam 85% SRLM, a NSP i objętość rozłożona na ludność NSP po 61-62%; WAPE rozkładu to 0,05 wobec 0,14 dla objętości. Przy 5 rejonach to sprawdzenie, że ocena działa, a nie wynik.
 
 Kwadrat z przykładu: spis 33, Haiku po skalowaniu 185, objętość 134. Spis liczy miejsce zamieszkania, a nie pobyt, więc studenci w dużej części nie są przypisani do akademika. Bez tego kwadratu Haiku ma Spearmana 0,86 i WAPE 0,14, a objętość 0,80 i 0,18.
 

@@ -1,4 +1,8 @@
-"""Wywołania Claude: jeden klient z pamięcią odpowiedzi w SQLite.
+"""Wywołania modelu: jeden klient z pamięcią odpowiedzi w SQLite.
+
+Model `claude-*` idzie do API Anthropic (klucz w ANTHROPIC_API_KEY). Każdy inny model (np. Qwen/Qwen3.8-27B) idzie do
+serwera zgodnego z API OpenAI pod adresem LOKALNY_URL (domyślnie vLLM na http://localhost:8000/v1); odpowiedź jest
+ograniczona schematem JSON, a koszt to 0 USD.
 
 Każde wywołanie (prompt, odpowiedź, tokeny, koszt) trafia do tabeli `wywolania`. Identyczne zapytanie nie idzie drugi raz
 do API, więc powtórka przebiegu jest darmowa, o ile prompty i obrazy się nie zmieniły.
@@ -11,12 +15,14 @@ import base64
 import hashlib
 import io
 import json
+import os
 import sqlite3
 import threading
 import time
 from dataclasses import dataclass
 
 import anthropic
+import openai
 from PIL import Image
 
 from agenci import BAZA, MAX_PX
@@ -30,7 +36,8 @@ WYSZUKANIE_USD = 0.01  # cena jednego zapytania do wyszukiwarki (10 USD za 1000)
 Z_FALLBACKIEM = {"claude-opus-5-5", "claude-sonnet-5-5"}  # modele, dla których włączamy fallbacks: "default"
 EFFORT = "medium"
 MAX_TOKENS = 16000
-ROWNOLEGLE = 4  # tyle wywołań modelu naraz
+ROWNOLEGLE = int(os.environ.get("ROWNOLEGLE", 4))  # tyle wywołań modelu naraz; dla lokalnego serwera więcej, np. 32
+LOKALNY_URL = os.environ.get("LOKALNY_URL", "http://localhost:8000/v1")  # serwer zgodny z API OpenAI dla modeli spoza Claude
 
 
 @dataclass
@@ -79,8 +86,10 @@ class Klient:
         self.model, self.eksperyment, self.na_sucho = model, eksperyment, na_sucho
         self.koszt = 0.0  # suma z przebiegu; odpowiedź z pamięci liczy się tak, jakby przyszła z API
         self.blokada = threading.Lock()  # wywołania idą z wielu wątków
+        self.lokalny = not model.startswith("claude-")
         if not na_sucho:
-            self.api = anthropic.Anthropic(max_retries=4)
+            self.api = (openai.OpenAI(base_url=LOKALNY_URL, api_key=os.environ.get("LOKALNY_KLUCZ", "brak"), timeout=3600, max_retries=4)
+                        if self.lokalny else anthropic.Anthropic(max_retries=4))
             BAZA.parent.mkdir(parents=True, exist_ok=True)
             self.db = sqlite3.connect(BAZA, check_same_thread=False)
             self.db.execute("""CREATE TABLE IF NOT EXISTS wywolania (
@@ -114,9 +123,10 @@ class Klient:
             return Odpowiedz(json.loads(odpowiedz) if odpowiedz else None, koszt, stop)
 
         start = time.perf_counter()
-        dane, we, wy, model_odp, stop, szukan = self._wyslij(system, tresc, schemat, wyszukiwan)
+        wyslij = self._wyslij_lokalnie if self.lokalny else self._wyslij
+        dane, we, wy, model_odp, stop, szukan = wyslij(system, tresc, schemat, wyszukiwan)
         czas = time.perf_counter() - start
-        cena_we, cena_wy = CENY.get(model_odp, CENY[self.model])
+        cena_we, cena_wy = CENY.get(model_odp, CENY.get(self.model, (0.0, 0.0)))
         koszt = (we * cena_we + wy * cena_wy) / 1e6 + szukan * WYSZUKANIE_USD
         with self.blokada:
             self.db.execute("""INSERT INTO wywolania (klucz, eksperyment, budynek, rola, model, model_odpowiedzi, system, prompt,
@@ -130,7 +140,7 @@ class Klient:
         """Szacunek: ok. 3 znaki na token, ok. 800 tokenów na obraz, 1500 tokenów wyjścia z zapasem na myślenie, 10 tys. tokenów na wynik wyszukiwania."""
         znaki = len(system) + sum(len(b["text"]) for b in tresc if b["type"] == "text")
         we = znaki // 3 + 800 * sum(b["type"] == "image" for b in tresc) + 10000 * wyszukiwan
-        cena_we, cena_wy = CENY[self.model]
+        cena_we, cena_wy = CENY.get(self.model, (0.0, 0.0))
         return Odpowiedz(_przyklad(schemat), (we * cena_we + 1500 * cena_wy) / 1e6 + wyszukiwan * WYSZUKANIE_USD, "na_sucho")
 
     def _wyslij(self, system, tresc, schemat, wyszukiwan=0):
@@ -154,3 +164,18 @@ class Klient:
         if odp.stop_reason == "end_turn":
             dane = json.loads([b.text for b in odp.content if b.type == "text"][-1])
         return dane, we, wy, odp.model, odp.stop_reason, szukan
+
+    def _wyslij_lokalnie(self, system, tresc, schemat, wyszukiwan=0):
+        """To samo zapytanie do serwera zgodnego z API OpenAI (vLLM): obrazy jako data URL, odpowiedź ograniczona schematem."""
+        if wyszukiwan:
+            raise ValueError("Wyszukiwarka działa tylko z modelami Claude; ustaw model_szperacza = \"claude-...\"")
+        bloki = [{"type": "text", "text": b["text"]} if b["type"] == "text" else
+                 {"type": "image_url", "image_url": {"url": f"data:{b['source']['media_type']};base64,{b['source']['data']}"}} for b in tresc]
+        odp = self.api.chat.completions.create(
+            model=self.model, max_tokens=MAX_TOKENS,
+            messages=[{"role": "system", "content": system}, {"role": "user", "content": bloki}],
+            response_format={"type": "json_schema", "json_schema": {"name": "odpowiedz", "schema": schemat}},
+            extra_body={"chat_template_kwargs": {"reasoning_effort": EFFORT}})
+        wybor = odp.choices[0]
+        dane = json.loads(wybor.message.content) if wybor.finish_reason == "stop" and wybor.message.content else None
+        return dane, odp.usage.prompt_tokens, odp.usage.completion_tokens, odp.model, wybor.finish_reason, 0

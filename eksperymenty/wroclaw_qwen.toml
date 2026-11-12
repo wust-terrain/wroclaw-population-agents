@@ -1,0 +1,10 @@
+# Cały Wrocław (826 arkuszy z `python -m ortofoto.pobierz --srlm`) na lokalnym Qwen3.8-27B przez vLLM: świadek, rubryka, pętla.
+# Szperacz potrzebuje wyszukiwarki z API Claude, więc idzie na Haiku (ok. 3300 budynków, kilkadziesiąt USD); szukaj = false go wyłącza.
+opis = "Wrocław: rekord BDOT10k i obrazy, rubryka z literatury, pętla, szperacz na Haiku, Qwen3.8-27B"
+estymator = "petla"
+model = "Qwen/Qwen3.8-27B"
+szukaj = true
+model_szperacza = "claude-haiku-5-5"
+
+[budynki]
+wszystkie = true

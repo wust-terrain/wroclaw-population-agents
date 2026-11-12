@@ -1,8 +1,11 @@
 """SRLM: szacowana rzeczywista liczba mieszkańców w rejonach komunikacyjnych Wrocławia (stan na 31.12.2022).
 
-Plik data/SRLM/SRLM_Wroclaw_20221231.shp: jeden wielokąt na rejon, EPSG:2177, kolumna LUD_SZAC to ludność rejonu.
-Służy do oceny: nie wchodzi do pętli (ta używa NSP 2021), więc porównanie z nim nie jest koliste. SRLM liczy osoby
-faktycznie przebywające (np. studentów), NSP zameldowanych, więc różnica między nimi jest osobnym źródłem rozjazdu.
+Plik data/SRLM/SRLM_Wroclaw_20221231.shp (załącznik raportu Uniwersytetu Wrocławskiego dla UMW, 2023, w BIP UMW):
+375 rejonów, EPSG:2177, LUD_SZAC to ludność rejonu, razem 893 506 osób, czyli więcej niż zameldowanych i niż w NSP 2021.
+Raport liczy ją z meldunków stałych i czasowych, dodaje niezameldowanych w zamieszkanych lokalach (lokale GUS minus
+lokale z meldunkami w PESEL), połowę pustych lokali po 3 osoby i 95% miejsc w akademikach i bursach; powierzchnię
+budynków z BDOT10k bierze tylko w kilku rejonach bez meldunków. Służy wyłącznie do oceny na końcu: nie widzi go ani
+pętla (ta używa NSP 2021), ani żaden prompt.
 
     obszar = obszar_pracy(rejony.loc[30].geometry)   # kwadraty NSP przecinające rejon: tu działa system
     u = udzialy_w_rejonach(bud, rejony)              # budynek przy granicy dzieli się między rejony
@@ -13,6 +16,7 @@ import pandas as pd
 
 from agenci.statystyka import wczytaj_nsp
 from ortofoto import DATA
+from ortofoto.budynki import wczytaj_bdot
 
 PLIK = DATA / "SRLM" / "SRLM_Wroclaw_20221231.shp"
 PLAC_GRUNWALDZKI = 30
@@ -47,3 +51,16 @@ def suma_w_rejonach(wartosci, bud, rejony):
     u = udzialy_w_rejonach(bud, rejony)
     u = u[u.index.get_level_values("id").isin(wartosci.index)]
     return (u * wartosci.reindex(u.index.get_level_values("id")).to_numpy()).groupby(level="rejon").sum().reindex(rejony.index).fillna(0.0)
+
+
+def pokrycie(rejony, ids):
+    """Część powierzchni mieszkalnej rejonu (obrys × kondygnacje z BDOT10k, budynki mieszkalne), która ma predykcję.
+
+    Rejon ocenia się tylko przy pokryciu bliskim 1: inaczej suma predykcji jest zaniżona przez budynki poza arkuszami.
+    """
+    bdot = wczytaj_bdot(rejony.union_all())
+    bdot = bdot[bdot.funkcja_ogolna == "budynki mieszkalne"]
+    u = udzialy_w_rejonach(bdot, rejony)
+    pow_ = u * (bdot.area * bdot.kondygnacje.fillna(1)).reindex(u.index.get_level_values("id")).to_numpy()
+    z_predykcja = pow_[u.index.get_level_values("id").isin(ids)].groupby(level="rejon").sum()
+    return (z_predykcja / pow_.groupby(level="rejon").sum()).reindex(rejony.index).fillna(0.0)

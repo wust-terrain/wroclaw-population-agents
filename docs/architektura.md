@@ -4,6 +4,8 @@ VLM (model, który widzi obrazy) opisuje budynek, a liczbę mieszkańców liczy 
 
 ![Architektura systemu](architektura.png)
 
+Ocenę robimy dwa razy i na różnych danych. Kwadraty NSP 2021 sprawdzają stan sprzed pętli, bo pętla widzi spis. Na końcu porównujemy sumy z SRLM, szacowaną rzeczywistą liczbą mieszkańców w 375 rejonach komunikacyjnych (raport UWr dla UMW, 2023), której nie widzi żaden agent. SRLM liczy też niezameldowanych, więc jest o ok. 33% wyższy od spisu; oceniamy rejony, których co najmniej 95% powierzchni mieszkalnej z BDOT10k ma predykcję. Baseline objętość × BDOT dostaje tam ludność NSP rozłożoną według objętości. Przebieg na całym mieście opisuje [serwer.md](serwer.md).
+
 *Estimator* to na rysunku wzór, nie pole `estymator` z TOML. Rysunek upraszcza trzy rzeczy: pierwsze przejście świadka jest przed opcjonalną pętlą, strzałka agent-świadek biegnie przez filtr w kodzie, a o budynek można pytać też bez flagi. Jeden budynek krok po kroku, pochodzenie rubryki i miary oceny (Spearman, WAPE, F1, bootstrap) opisuje README.
 
 ## Dane w kodzie
@@ -26,12 +28,12 @@ Model dostaje do 8 obrazów, każdy z podpisem, np. `Widok N: kamera patrzy na p
 
 ## Agenci
 
-Agent to jedno bezstanowe wywołanie modelu bez narzędzi, z odpowiedzią w JSON wymuszonym schematem. Stan trzyma kod, a wszystkie role obsługuje jeden `model` z TOML. Wywołania idą przez `llm.Klient`, który zapisuje je w SQLite, więc każda zmiana promptu to nowe, płatne wywołania.
+Agent to jedno bezstanowe wywołanie modelu bez narzędzi, z odpowiedzią w JSON wymuszonym schematem. Stan trzyma kod, a wszystkie role obsługuje jeden `model` z TOML; tylko szperacz może mieć własny `model_szperacza`, bo wyszukiwarkę daje API Claude. Wywołania idą przez `llm.Klient`: model `claude-*` do API Anthropic, każdy inny (np. `Qwen/Qwen3.8-27B`) do serwera vLLM zgodnego z API OpenAI (`LOKALNY_URL`). Klient zapisuje odpowiedzi w SQLite, więc każda zmiana promptu to nowe wywołania, a przerwany przebieg wznawia się od miejsca awarii.
 
 | Agent | Kiedy | Dostaje | Zwraca |
 | --- | --- | --- | --- |
 | Świadek (VLM) | raz na budynek | obrazy, przy `z_rekordem = true` też rekord | obserwację |
-| Agent bilansujący (LLM) | raz w rundzie z kandydatami | kwadraty z flagą (spis, szacunek, obserwacje i szacunki budynków), budynki sprzeczne z rekordem, historię pytań | `kwadraty` (diagnozy), `pytania`, `nowa_zabudowa` |
+| Agent bilansujący (LLM) | raz w rundzie na paczkę kandydatów (do 25 kwadratów z flagą) | kwadraty z flagą (spis, szacunek, obserwacje i szacunki budynków), budynki sprzeczne z rekordem, historię pytań | `kwadraty` (diagnozy), `pytania`, `nowa_zabudowa` |
 | Szperacz (LLM z wyszukiwarką) | raz na budynek z listy, przy `szukaj = true` | adres, rekord, typ od świadka | `znalezione` (`miejsca`, `mieszkania`, `brak`), `liczba`, `zrodlo`, `cytat` |
 | Świadek, dopytanie (VLM) | raz na pytanie po filtrze | to co świadek, poprzednią odpowiedź, pytanie | całą obserwację od nowa |
 
@@ -59,7 +61,7 @@ flowchart TD
 1. `bilans` sumuje szacunki w kompletnych kwadratach (budynek na granicy kwadratów wnosi do każdego część proporcjonalną do obrysu) i mnoży je przez wspólną skalę, żeby suma równała się spisowi. Skala służy tylko do tego porównania. Flaga to różnica ponad 1,5 raza w dowolną stronę i co najmniej 25 osób.
 2. Kandydaci to budynki z kwadratów z flagą oraz, także spoza nich, budynki sprzeczne z rekordem (`sprzeczny`): świadek i BDOT10k różnią się co do tego, czy ktoś tu mieszka.
 3. Agent stawia diagnozę (`blad_swiadka`, `nowa_zabudowa`, `rubryka`, `szum_spisu` albo `nieznana`) i wybiera, o co pytać. Diagnozy i lista `nowa_zabudowa` trafiają tylko do zapisu. Brak odpowiedzi to odmowa modelu albo limit tokenów.
-4. `wazne_pytania` przepuszcza pytania o kandydatów i o `typ`, `udzial_mieszkalny` albo `stan`, jedno na budynek w rundzie, najwyżej 20 na rundę, bez powtórki pary budynek i atrybut. Cyfry zmienia na `…`, żeby świadek nie poznał liczb ze spisu.
+4. `wazne_pytania` przepuszcza pytania o kandydatów i o `typ`, `udzial_mieszkalny` albo `stan`, jedno na budynek w rundzie, najwyżej 20 z jednego wywołania, bez powtórki pary budynek i atrybut. Cyfry zmienia na `…`, żeby świadek nie poznał liczb ze spisu.
 5. Odpowiedź świadka zastępuje poprzednią obserwację, więc pytanie o `typ` może zmienić też udział.
 6. Wzór liczy od nowa wszystkie budynki. Tylko tak zmienia się szacunek.
 
@@ -89,13 +91,14 @@ Stan inny niż `uzytkowany` też daje 0. Powierzchnia i kondygnacje pochodzą z 
 
 | Plik (domyślnie w `src/agenci/`) | Co tam jest, co tu zmienisz |
 | --- | --- |
-| `src/ortofoto/` | `arkusze.py`: TIF-y; `pobierz.py`: arkusze ze skorowidza GUGiK; `budynki.py`: BDOT10k, wysokość z LiDAR-u, adresy z OSM; `wycinki.py`: wycinki, fasady, przesunięcie dachu `K` |
+| `src/ortofoto/` | `arkusze.py`: TIF-y (otwierane leniwie, osobno w każdym wątku); `pobierz.py`: arkusze ze skorowidza GUGiK (`--srlm`: cały Wrocław); `budynki.py`: BDOT10k, wysokość z LiDAR-u i OSM z kafli w `data/kafle/`, adresy z punktów adresowych OSM; `wycinki.py`: wycinki, fasady, przesunięcie dachu `K` |
 | `karta.py` | `Karta`, kolory obrysów |
-| `llm.py` | `Klient`: dostawca modelu, pamięć odpowiedzi, `CENY` |
+| `llm.py` | `Klient`: Anthropic albo vLLM, pamięć odpowiedzi, `CENY`, `ROWNOLEGLE` (zmienna środowiskowa) |
 | `swiadkowie.py` | prompt i schemat świadka, `TYPY`, `dopytaj_swiadka` |
 | `estymatory.py` | `ze_wzoru`, `klasa`, rubryka (`OSOBY_NA_DOM`, `M2_NA_OSOBE`), baseline'y: tu dopisujesz nowy (funkcja karta → liczba) |
 | `statystyka.py` | NSP 2021, kwadraty i udziały budynków w kwadratach |
-| `petla.py` | `bilans`, `sprzeczny`, `wazne_pytania`, `uzgodnij`, prompt agenta; `PROG_ILORAZU` 1,5, `MIN_OSOB` 25, `RUNDY` 2, `MAX_PYTAN` 20 |
+| `petla.py` | `bilans`, `sprzeczny`, `wazne_pytania`, `uzgodnij`, prompt agenta; `PROG_ILORAZU` 1,5, `MIN_OSOB` 25, `RUNDY` 2, `MAX_PYTAN` 20, `PACZKA` 25 kwadratów i `PACZKA_SPRZECZNYCH` 50 budynków na wywołanie agenta |
 | `szperacz.py` | wybór budynków, prompt szperacza, `z_sieci`; `NA_ARKUSZ` 4 budynki na arkusz, `MAX_WYSZUKAN` 2 |
 | `eksperyment.py` | `Konfiguracja` (pola TOML), rejestr baseline'ów `BASELINE` |
-| `ewaluacja.py` | zgodność z BDOT10k, sumy w kwadratach, bootstrap |
+| `ewaluacja.py` | zgodność z BDOT10k, sumy w kwadratach, bootstrap; `--srlm`: rejony SRLM, `POKRYCIE` 0,95 |
+| `srlm.py` | rejony SRLM, udziały budynków w rejonach, `pokrycie` powierzchni mieszkalnej, `obszar_pracy` dla `[budynki] rejon` |

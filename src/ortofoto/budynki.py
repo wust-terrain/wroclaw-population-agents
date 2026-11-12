@@ -9,8 +9,10 @@ a brakujący adres bierzemy z punktu adresowego OSM leżącego w obrysie.
 
 import json
 import tempfile
+import time
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 
 import geopandas as gpd
 import numpy as np
@@ -19,7 +21,7 @@ import pyogrio
 import rasterio
 import rasterio.mask
 from pyproj import Transformer
-from shapely.geometry import Point, Polygon
+from shapely.geometry import Point, Polygon, box
 
 from ortofoto import DATA
 from ortofoto.arkusze import zasieg
@@ -29,37 +31,57 @@ WCS = ("https://mapy.geoportal.gov.pl/wss/service/PZGIK/{0}/GRID1/WCS/{1}?SERVIC
        "&COVERAGEID={2}_PL-EVRF2007-NH&FORMAT=image/x-aaigrid&SUBSET=x({3},{5})&SUBSET=y({4},{6})")
 MODELE = {"nmpt": ("NMPT", "DigitalSurfaceModel", "DSM"), "nmt": ("NMT", "DigitalTerrainModel", "DTM")}
 TAGI = ["building", "building:levels", "height", "addr:street", "addr:housenumber", "name"]
+KAFLE = DATA / "kafle"  # pobrane raz kafle OSM i LiDAR-u
+KAFEL_OSM = 2000  # bok kafla [m] dla zapytań Overpass
+KAFEL_LIDAR = 1000  # bok kafla [m] dla rastrów wysokości (0,5 m, więc ok. 2000 × 2000 pikseli)
+MARGINES_LIDAR = 100  # rastry sięgają tyle poza kafel, żeby objąć budynki na jego granicy
 
 
-def _zapytaj(zapytanie):
-    """Wysyła zapytanie do kolejnych serwerów Overpass, aż któryś odpowie."""
-    for url in OVERPASS:
-        req = urllib.request.Request(url, data=urllib.parse.urlencode({"data": zapytanie}).encode(),
-                                     headers={"User-Agent": "wroclaw-population-agents/0.1"})
-        try:
-            return json.load(urllib.request.urlopen(req, timeout=180))["elements"]
-        except OSError as e:  # HTTPError i timeout dziedziczą po OSError
-            blad = e
+def _zapytaj(zapytanie, rundy=3):
+    """Wysyła zapytanie do kolejnych serwerów Overpass, aż któryś odpowie; przy przeciążeniu czeka minutę i próbuje znowu."""
+    for runda in range(rundy):
+        for url in OVERPASS:
+            req = urllib.request.Request(url, data=urllib.parse.urlencode({"data": zapytanie}).encode(),
+                                         headers={"User-Agent": "wroclaw-population-agents/0.1"})
+            try:
+                return json.load(urllib.request.urlopen(req, timeout=200))["elements"]
+            except OSError as e:  # HTTPError i timeout dziedziczą po OSError
+                blad = e
+        if runda < rundy - 1:
+            time.sleep(60)
     raise blad
 
 
-def _pobierz_osm(obszar, plik):
-    lon, lat = Transformer.from_crs(2177, 4326, always_xy=True).transform(*np.array(obszar.envelope.exterior.coords).T)
-    zapytanie = f'[out:json][timeout:90];way["building"]({lat.min()},{lon.min()},{lat.max()},{lon.max()});out tags geom;'
-    wiersze = [{"osm_id": e["id"], **{t: e["tags"].get(t) for t in TAGI},
-                "geometry": Polygon([(p["lon"], p["lat"]) for p in e["geometry"]])}
-               for e in _zapytaj(zapytanie) if len(e.get("geometry", [])) >= 4]
-    gpd.GeoDataFrame(wiersze, crs=4326).to_file(plik, driver="GeoJSON")
+def kafle(obszar, bok):
+    """Lewe dolne rogi kwadratów bok × bok [m] (EPSG:2177, wyrównanych do wielokrotności bok), które przecinają obszar."""
+    x0, y0, x1, y1 = obszar.bounds
+    return [(x, y) for x in range(int(x0 // bok * bok), int(x1), bok) for y in range(int(y0 // bok * bok), int(y1), bok)
+            if box(x, y, x + bok, y + bok).intersects(obszar)]
+
+
+def _overpass_kafel(rodzaj, x, y):
+    """Obrysy budynków ("budynki") albo punkty adresowe ("adresy") z jednego kafla KAFEL_OSM, pobrane raz i zapisane w data/kafle/."""
+    plik = KAFLE / f"osm_{rodzaj}_{x}_{y}.geojson"
+    if not plik.exists():
+        lon0, lat0, lon1, lat1 = Transformer.from_crs(2177, 4326, always_xy=True).transform_bounds(x, y, x + KAFEL_OSM, y + KAFEL_OSM)
+        if rodzaj == "budynki":
+            elementy = _zapytaj(f'[out:json][timeout:180];way["building"]({lat0},{lon0},{lat1},{lon1});out tags geom;')
+            wiersze = [{"osm_id": e["id"], **{t: e["tags"].get(t) for t in TAGI},
+                        "geometry": Polygon([(q["lon"], q["lat"]) for q in e["geometry"]])} for e in elementy if len(e.get("geometry", [])) >= 4]
+        else:
+            elementy = _zapytaj(f'[out:json][timeout:180];node["addr:housenumber"]({lat0},{lon0},{lat1},{lon1});out;')
+            wiersze = [{"ulica": e["tags"].get("addr:street") or e["tags"].get("addr:place"), "numer": e["tags"]["addr:housenumber"],
+                        "geometry": Point(e["lon"], e["lat"])} for e in elementy]
+        KAFLE.mkdir(exist_ok=True)
+        gpd.GeoDataFrame(wiersze, geometry="geometry", crs=4326).to_file(plik, driver="GeoJSON")
+    return gpd.read_file(plik).to_crs(2177)
 
 
 def wczytaj_osm(obszar=None):
-    """Obrysy budynków z OSM (pobrane raz przez Overpass i zapisane w data/), indeks osm_id."""
+    """Obrysy budynków z OSM (Overpass, kafle zapisane w data/kafle/), indeks osm_id."""
     obszar = obszar if obszar is not None else zasieg()
-    x0, y0, x1, y1 = (round(v) for v in obszar.bounds)
-    plik = DATA / f"osm_budynki_{x0}_{y0}_{x1}_{y1}.geojson"
-    if not plik.exists():
-        _pobierz_osm(obszar, plik)
-    osm = gpd.read_file(plik).to_crs(2177).set_index("osm_id")
+    osm = pd.concat([_overpass_kafel("budynki", x, y) for x, y in kafle(obszar, KAFEL_OSM)])
+    osm = osm.drop_duplicates("osm_id").set_index("osm_id")
     osm["kondygnacje_osm"] = pd.to_numeric(osm["building:levels"], errors="coerce")
     osm["h_osm"] = pd.to_numeric(osm["height"].astype(str).str.replace(",", "."), errors="coerce")
     return osm[osm.centroid.within(obszar)]
@@ -68,15 +90,7 @@ def wczytaj_osm(obszar=None):
 def wczytaj_adresy(obszar=None):
     """Punkty adresowe z OSM (węzły z numerem domu, w Polsce głównie z importu PRG): kolumny ulica, numer; EPSG:2177."""
     obszar = obszar if obszar is not None else zasieg()
-    x0, y0, x1, y1 = (round(v) for v in obszar.bounds)
-    plik = DATA / f"osm_adresy_{x0}_{y0}_{x1}_{y1}.geojson"
-    if not plik.exists():
-        lon, lat = Transformer.from_crs(2177, 4326, always_xy=True).transform(*np.array(obszar.envelope.exterior.coords).T)
-        zapytanie = f'[out:json][timeout:90];node["addr:housenumber"]({lat.min()},{lon.min()},{lat.max()},{lon.max()});out;'
-        wiersze = [{"ulica": e["tags"].get("addr:street") or e["tags"].get("addr:place"), "numer": e["tags"]["addr:housenumber"],
-                    "geometry": Point(e["lon"], e["lat"])} for e in _zapytaj(zapytanie)]
-        gpd.GeoDataFrame(wiersze, crs=4326).to_file(plik, driver="GeoJSON")
-    adresy = gpd.read_file(plik).to_crs(2177)
+    adresy = pd.concat([_overpass_kafel("adresy", x, y) for x, y in kafle(obszar, KAFEL_OSM)]).drop_duplicates()
     return adresy[adresy.ulica.notna()]
 
 
@@ -92,38 +106,54 @@ def _dolacz_adresy(bud, adresy):
     return bud
 
 
-def model_wysokosci(nazwa, obszar=None):
-    """Plik rastra wysokości z GUGiK ("nmpt" albo "nmt") dla obszaru, pobrany raz przez WCS i zapisany w data/; EPSG:2180."""
-    obszar = obszar if obszar is not None else zasieg()
-    x0, y0, x1, y1 = (round(v) for v in obszar.bounds)
-    plik = DATA / f"{nazwa}_{x0}_{y0}_{x1}_{y1}.tif"
+def model_wysokosci(nazwa, x, y):
+    """Plik rastra wysokości z GUGiK ("nmpt" albo "nmt") dla kafla KAFEL_LIDAR z rogiem (x, y) i marginesem, pobrany raz przez
+    WCS i zapisany w data/kafle/; EPSG:2180."""
+    plik = KAFLE / f"{nazwa}_{x}_{y}.tif"
     if not plik.exists():
-        ramka = Transformer.from_crs(2177, 2180, always_xy=True).transform_bounds(x0 - 20, y0 - 20, x1 + 20, y1 + 20)
+        m = MARGINES_LIDAR
+        ramka = Transformer.from_crs(2177, 2180, always_xy=True).transform_bounds(x - m, y - m, x + KAFEL_LIDAR + m, y + KAFEL_LIDAR + m)
         odp = urllib.request.urlopen(WCS.format(*MODELE[nazwa], *(round(v) for v in ramka)), timeout=300).read()
         siatka = odp[odp.find(b"ncols"):].split(b"--wcs")[0]  # serwer pakuje siatkę ASCII w odpowiedź wieloczęściową
+        KAFLE.mkdir(exist_ok=True)
         with tempfile.NamedTemporaryFile(suffix=".asc") as tmp:
             tmp.write(siatka)
             tmp.flush()
             with rasterio.open(tmp.name) as src:
                 profil = src.profile | {"driver": "GTiff", "crs": 2180, "compress": "deflate"}
-                with rasterio.open(plik, "w", **profil) as dst:
+                with rasterio.open(plik.with_suffix(".czesc"), "w", **profil) as dst:
                     dst.write(src.read())
+        plik.with_suffix(".czesc").rename(plik)
     return plik
 
 
-def wysokosc_lidar(bud, obszar=None):
-    """Wysokość budynków [m]: mediana NMPT w obrysie (bez metra przy krawędzi) minus teren, czyli 10. percentyl NMT wokół obrysu."""
+def wysokosc_lidar(bud):
+    """Wysokość budynków [m]: mediana NMPT w obrysie (bez metra przy krawędzi) minus teren, czyli 10. percentyl NMT wokół obrysu.
+
+    Budynek bierze rastry z kafla, w którym leży jego środek; kafle pobieramy po kilka naraz.
+    """
     def wartosci(src, geom):
         z = rasterio.mask.mask(src, [geom], crop=True, filled=False)[0].compressed()
         return z[z > -100]  # poza zasięgiem danych serwer zwraca dużą liczbę ujemną
 
+    srodki = bud.centroid
+    kx, ky = ((srodki.x // KAFEL_LIDAR * KAFEL_LIDAR).astype(int).to_numpy(), (srodki.y // KAFEL_LIDAR * KAFEL_LIDAR).astype(int).to_numpy())
+    grupy = bud.index.to_series().groupby([kx, ky])
+    with ThreadPoolExecutor(4) as ex:
+        list(ex.map(lambda k: [model_wysokosci(n, int(k[0]), int(k[1])) for n in ("nmpt", "nmt")], grupy.groups))
     wynik = {}
-    with rasterio.open(model_wysokosci("nmpt", obszar)) as nmpt, rasterio.open(model_wysokosci("nmt", obszar)) as nmt:
-        for i, g in bud.geometry.to_crs(2180).items():
-            srodek = g.buffer(-1)
-            dach, teren = wartosci(nmpt, g if srodek.is_empty else srodek), wartosci(nmt, g.buffer(3))
-            if len(dach) and len(teren):
-                wynik[i] = float(np.median(dach) - np.percentile(teren, 10))
+    geom = bud.geometry.to_crs(2180)
+    for k, idx in grupy.groups.items():
+        x, y = int(k[0]), int(k[1])
+        with rasterio.open(model_wysokosci("nmpt", x, y)) as nmpt, rasterio.open(model_wysokosci("nmt", x, y)) as nmt:
+            for i, g in geom.loc[idx].items():
+                srodek = g.buffer(-1)
+                try:
+                    dach, teren = wartosci(nmpt, g if srodek.is_empty else srodek), wartosci(nmt, g.buffer(3))
+                except ValueError:  # obrys poza rastrem kafla (bardzo duży budynek na granicy)
+                    continue
+                if len(dach) and len(teren):
+                    wynik[i] = float(np.median(dach) - np.percentile(teren, 10))
     return pd.Series(wynik, dtype=float)
 
 
@@ -182,7 +212,7 @@ def wczytaj_budynki(obszar=None):
     bud = _dolacz_adresy(bud.join(osm[kolumny_osm], on="osm_id"), wczytaj_adresy(obszar))
     bud["mieszkalny_bdot"] = bud.funkcja_ogolna == "budynki mieszkalne"
     kond = bud.kondygnacje.fillna(bud.kondygnacje_osm)
-    lidar = wysokosc_lidar(bud, obszar).reindex(bud.index)
+    lidar = wysokosc_lidar(bud).reindex(bud.index)
     lidar = lidar.where(lidar >= 2)
     bud["h"] = lidar.fillna(3.3 * kond + 2).fillna(8.0)
     bud["zrodlo_h"] = np.select([lidar.notna(), kond.notna()], ["LiDAR", "z kondygnacji"], "domyślna")

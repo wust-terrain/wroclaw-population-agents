@@ -9,6 +9,7 @@ dependencies = [
     "geopandas>=1.2.0",
     "ipykernel>=7.2.0",
     "matplotlib>=3.11.2",
+    "openai>=2.0",
     "openpyxl>=3.1.5",
     "pillow>=13.0.0",
     "rasterio>=1.5.2",

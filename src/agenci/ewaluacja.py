@@ -1,7 +1,8 @@
-"""Ewaluacja przebiegów: zgodność z BDOT10k i sumy w kwadratach NSP 2021.
+"""Ewaluacja przebiegów: zgodność z BDOT10k, sumy w kwadratach NSP 2021 i, na końcu, sumy w rejonach SRLM.
 
-    python -m agenci.ewaluacja            # tabela wszystkich przebiegów, które mają wyniki
-    python -m agenci.ewaluacja --rejon 30 # przebiegi z [budynki] rejon = 30 porównane z SRLM
+    python -m agenci.ewaluacja                # tabela wszystkich przebiegów, które mają wyniki (kwadraty NSP)
+    python -m agenci.ewaluacja --srlm         # te same przebiegi na rejonach SRLM pokrytych arkuszami
+    python -m agenci.ewaluacja --srlm 30 367  # tylko wybrane rejony, z tabelą rejonów
 
 Dla pojedynczego budynku nie mamy żadnej referencji, więc liczbę mieszkańców oceniamy tylko na kwadratach NSP 2021, w których
 predykcję ma każdy budynek mieszkalny. Kwadraty są jednostką losowania: przedziały to bootstrap kwadratów, przy kilkunastu
@@ -18,12 +19,13 @@ import pandas as pd
 
 from agenci import EKSPERYMENTY, PRZEBIEGI
 from agenci.eksperyment import BASELINE, obszar_konfiguracji, wczytaj_konfiguracje
-from agenci.srlm import suma_w_rejonach, udzialy_w_rejonach, wczytaj_srlm
-from agenci.statystyka import budynki_w_kwadratach, kompletne_kwadraty, sumy, udzialy
+from agenci.srlm import pokrycie, suma_w_rejonach, wczytaj_srlm
+from agenci.statystyka import budynki_w_kwadratach, kompletne_kwadraty, sumy, udzialy, wczytaj_nsp
 from ortofoto.arkusze import zasieg
 from ortofoto.budynki import wczytaj_budynki
 
 BOOTSTRAP = 2000  # liczba losowań do przedziałów
+POKRYCIE = 0.95  # rejon SRLM oceniamy, gdy co najmniej tyle jego powierzchni mieszkalnej ma predykcję
 
 
 def wczytaj(nazwa):
@@ -105,51 +107,67 @@ def porownaj_sumy(a, b, ref):
     return wynik
 
 
-def ocena_rejonow(pred, bud, rejony, kw=None, kolumna="mieszkancy"):
-    """Suma predykcji w rejonach SRLM i jej stosunek do SRLM (1 = zgodność), jeden wiersz na rejon.
+def osoby(pred, bud, kw, kol):
+    """Predykcja w osobach, seria o indeksie id budynku. Baseline (objetosc_m3) dostaje ludność NSP rozłożoną wg objętości:
+    objętość razy (ludność / objętość) z kompletnych kwadratów spisu, czyli klasyczny rozkład dazymetryczny; SRLM go nie widzi."""
+    s = pred.dropna(subset=[kol]).set_index("budynek")[kol]
+    if kol == "objetosc_m3":
+        suma, ref = sumy_kwadratow(pred, bud, kw, kol)
+        s = s * ref.sum() / suma.sum()
+    return s
 
-    Budynek przy granicy wnosi tyle, ile wynosi udział jego obrysu w rejonie. `bez_predykcji` to budynki rejonu bez
-    wyniku (błąd modelu): ich brak zaniża sumę. Z kw (kwadraty NSP) dodajemy `nsp`, czyli ludność kwadratów
-    rozdzieloną na rejon wg pola części wspólnej; to rozróżnia błąd modelu od różnicy między spisem a SRLM.
+
+def ocena_rejonow(s, bud, rejony):
+    """Suma predykcji (osoby, seria o indeksie id) w rejonach SRLM, jeden wiersz na rejon.
+
+    Budynek przy granicy wnosi tyle, ile wynosi udział jego obrysu w rejonie; `nsp` to ludność kwadratów spisu
+    rozdzielona na rejon wg pola części wspólnej, czyli punkt odniesienia: ile rozjazdu z SRLM ma sam spis.
     """
-    ok = pred.dropna(subset=[kolumna]).set_index("budynek")[kolumna]
     wynik = rejony[["nazwa", "ludnosc"]].rename(columns={"ludnosc": "srlm"})
-    wynik["suma"] = suma_w_rejonach(ok, bud, rejony)
+    wynik["suma"] = suma_w_rejonach(s, bud, rejony)
     wynik["stosunek"] = wynik.suma / wynik.srlm
-    wynik["blad_wzgl"] = wynik.stosunek - 1
-    u = udzialy_w_rejonach(bud, rejony)
-    u = u[u > 0.5]  # budynek należy do rejonu, jeśli ma w nim większość obrysu
-    wynik["budynki"] = u.groupby(level="rejon").size().reindex(rejony.index).fillna(0).astype(int)
-    wynik["bez_predykcji"] = [len(set(u.xs(n, level="rejon").index) - set(ok.index)) for n in rejony.index]
-    if kw is not None:
-        czesc = {n: sum(w * g.intersection(rejony.geometry[n]).area / g.area for w, g in zip(kw.ludnosc, kw.geometry)) for n in rejony.index}
-        wynik["nsp"] = pd.Series(czesc)
+    wynik["pokrycie"] = pokrycie(rejony, s.index)
+    nsp = wczytaj_nsp(rejony.union_all())
+    wynik["nsp"] = pd.Series({n: (nsp.ludnosc * nsp.intersection(g).area / nsp.area).sum() for n, g in rejony.geometry.items()})
     return wynik
 
 
-def podsumowanie_srlm(numery):
-    """Tabela rejonów SRLM `numery` dla każdego przebiegu z [budynki] rejon = n, który ma wyniki (przed pętlą i po niej).
+def miary_srlm(t, kolumna="suma"):
+    """Spearman, WAPE po przeskalowaniu (rozkład) i poziom (suma / SRLM) na rejonach tabeli z ocena_rejonow."""
+    a, b = t[kolumna].to_numpy(float), t.srlm.to_numpy(float)
+    return {"n_rejonow": len(t), "srlm": b.sum(), "szacunek": a.sum(), "poziom": a.sum() / b.sum(),
+            "spearman": _spearman(a, b) if len(t) >= 3 else np.nan, "wape": _wape(a, b)}
 
-    Baseline'y `objetosc*` dają metry sześcienne, więc zamiast stosunku do SRLM mają `m3_na_osobe` (objętość / SRLM):
-    to stała, którą trzeba by wziąć z innych rejonów, żeby baseline dał osoby.
+
+def podsumowanie_srlm(numery=None, prog=POKRYCIE):
+    """Ocena na SRLM każdego przebiegu z wynikami: rejony, których zabudowa mieszkalna ma predykcję w co najmniej `prog`.
+
+    Pętlę oceniamy przed i po uzgadnianiu (SRLM nie zna żadna runda); `nsp_2021` to sam spis rozłożony na rejony.
+    Zwraca (miary na przebieg, tabela rejonów).
     """
     rejony = wczytaj_srlm(numery)
-    wiersze = []
+    miary, tabele = [], []
     for plik in sorted(EKSPERYMENTY.glob("*.toml")):
-        konf = wczytaj_konfiguracje(plik)
-        n = konf.budynki.get("rejon")
-        if n not in numery or not (PRZEBIEGI / f"{plik.stem}.csv").exists():
+        if not (PRZEBIEGI / f"{plik.stem}.csv").exists():
             continue
+        konf = wczytaj_konfiguracje(plik)
         obszar = obszar_konfiguracji(konf)
         bud = wczytaj_budynki(obszar)
-        kw = budynki_w_kwadratach(obszar)[1]
+        miasto, kw = budynki_w_kwadratach(obszar if obszar is not None else zasieg())
         p = wczytaj(plik.stem)
-        for kolumna in dict.fromkeys(["mieszkancy_r0", "mieszkancy"] if "mieszkancy_r0" in p else ["mieszkancy"]):
-            o = ocena_rejonow(p, bud, rejony.loc[[n]], kw, kolumna).assign(przebieg=plik.stem, kolumna=kolumna)
-            if konf.estymator in BASELINE:  # baseline zwraca objętość [m³], nie osoby: poziomu nie porównujemy z SRLM
-                o = o.rename(columns={"suma": "objetosc_m3", "stosunek": "m3_na_osobe"}).drop(columns="blad_wzgl")
-            wiersze.append(o.reset_index())
-    return pd.concat(wiersze).set_index(["przebieg", "kolumna", "NR_REJ"]) if wiersze else pd.DataFrame()
+        kolumny = ["mieszkancy_r0", "mieszkancy"] if "mieszkancy_r0" in p else [kolumna(p)]
+        tu = rejony[rejony.intersects(bud.union_all())]
+        for kol in kolumny:
+            t = ocena_rejonow(osoby(p, miasto, kw, kol), bud, tu)
+            t = t[t.pokrycie >= prog].assign(przebieg=plik.stem, kolumna=kol)
+            if len(t):
+                tabele.append(t)
+                miary.append({"przebieg": plik.stem, "kolumna": kol} | miary_srlm(t))
+                if kol == kolumny[0]:
+                    miary.append({"przebieg": plik.stem, "kolumna": "nsp_2021"} | miary_srlm(t, "nsp"))
+    if not miary:
+        return pd.DataFrame(), pd.DataFrame()
+    return pd.DataFrame(miary).set_index(["przebieg", "kolumna"]), pd.concat(tabele).set_index(["przebieg", "kolumna"], append=True)
 
 
 def podsumowanie():
@@ -170,7 +188,13 @@ def podsumowanie():
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Porównanie przebiegów.")
-    parser.add_argument("--rejon", type=int, nargs="+", help="numery rejonów SRLM: porównanie sum z SRLM zamiast tabeli kwadratów NSP")
+    parser.add_argument("--srlm", type=int, nargs="*", help="ocena na rejonach SRLM (bez numerów: wszystkie pokryte arkuszami)")
     args = parser.parse_args()
     with pd.option_context("display.width", 200, "display.max_columns", None):
-        print((podsumowanie_srlm(args.rejon) if args.rejon else podsumowanie()).round(3).to_string())
+        if args.srlm is None:
+            print(podsumowanie().round(3).to_string())
+        else:
+            miary, rejony = podsumowanie_srlm(args.srlm or None)
+            print(miary.round(3).to_string())
+            if args.srlm:
+                print(rejony.drop(columns="geometry", errors="ignore").round(2).to_string())

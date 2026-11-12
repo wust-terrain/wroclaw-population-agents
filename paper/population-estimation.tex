@@ -23,7 +23,7 @@
 
 \graphicspath{{rysunki/}}
 
-\title{Who Lives in This Building? A Pilot of an Agentic VLM System for Building-Level Population Estimation in Wrocław}
+\title{Who Lives in This Building? An Agentic VLM System for Building-Level Population Estimation in Wrocław}
 
 % Pięć osób z jedną afiliacją: imiona w dwóch rzędach, afiliacja i kontakt pod spodem.
 \author{
@@ -46,20 +46,20 @@
 \maketitle
 
 \begin{abstract}
-Traffic models need residents per building, but the Polish census reports them per 125\,m cell.
+Traffic models need the people who actually live in each building, but the Polish census reports registered residents per 125\,m cell.
 In our system a vision-language model (VLM) describes each building from oblique aerial photos, a formula turns the description into residents, a second model questions the VLM where estimates disagree with the census, and a third searches the web for the largest buildings.
-A pilot on 341 buildings works end to end but cannot yet be told apart from a baseline built from building volume.
+On five sheets (1,044 buildings) the system matches the census as well as a building-volume baseline, and on the five city regions it fully covers it reaches 85\% of an independent estimate of actual residents, against 62\% for the baseline.
+We describe the evaluation and the planned run on the whole city with an open-weight VLM.
 \end{abstract}
 
 \section{Introduction}
 
-We estimate how many people live in each building in Wrocław.
-We expect a traffic model to be more accurate with such data, and the 2021 census (NSP) stops at 125\,$\times$\,125\,m cells.
-A VLM, which we call the witness, reports what it sees and a fixed formula computes the residents, so every estimate can be traced.
-A second model, the balancing agent, can ask the witness to look again.
+We estimate how many people live in each building in Wrocław, as input to a traffic model.
+The 2021 census (NSP) stops at 125\,m cells and misses many students and migrants; an estimate of actual residents, SRLM \citep{szmytkie2023srlm}, is 33\% higher but given only for 375 regions.
+A VLM, the witness, reports what it sees and a fixed formula computes the residents, so every estimate can be traced; a second model, the balancing agent, can ask the witness to look again.
 
 We ask whether images add anything beyond the building record (RQ1), whether the agent improves the descriptions or only pulls estimates towards totals it has seen (RQ2), and whether an open-weight VLM can replace a paid one (RQ3).
-None is answered yet: the pilot tests the pipeline on a cheap model, Claude Haiku.
+So far we ran the pipeline on a cheap paid model, Claude Haiku; the final run uses the open-weight Qwen3.8-27B \citep{qwen2026}.
 
 \section{Related Work}
 
@@ -71,23 +71,17 @@ Debating agents can converge on wrong answers \citep{du2024debate}, and unchecke
 
 \section{Data}
 
-We use five public sources: an oblique orthophoto from 2025 (one sheet photographed at an angle from N, E, S and W, 5\,cm pixel), BDOT10k (footprint, function, storeys, state), airborne laser scanning (height), OpenStreetMap (address) and the census (residents per cell).
-The sheet covers 800\,$\times$\,500\,m around Grunwaldzki Square: 341 buildings, 248 of them residential, no single-family houses (Figure~\ref{fig:dane}).
-The census assigns people to address points and long blocks cross cell borders, so a building's residents are split between cells by footprint area.
-The sheet cuts cells at its edge, so we compare with the census only in the 14 complete cells (5,145 residents).
+We use public sources: an oblique orthophoto from 2025 (each sheet photographed at an angle from N, E, S and W, 5\,cm pixel), BDOT10k (footprint, function, storeys, state), airborne laser scanning (height), OpenStreetMap address points (imported from the national register) and the census (residents per cell).
+So far we use five sheets around Grunwaldzki Square, 2\,km$^2$ with 1,044 buildings, 690 of them residential and few houses (Figure~\ref{fig:szacunki}); 662 residential buildings get an address.
+A building crossing cell borders is split between cells by footprint area.
+We compare with the census only in the 82 cells that lie wholly on the sheets (18,218 residents).
 
-\begin{figure}[t]
-  \centering
-  \includegraphics[width=\columnwidth]{dane}
-  \caption{BDOT10k footprints and census cells on the sheet; labels give the census residents of complete cells.}
-  \label{fig:dane}
-\end{figure}
+The photos are georeferenced, so a building gets up to 4 views and 4 facades, which are crops with a wall rectified to a rectangle (Figure~\ref{fig:karta}); buildings at the outer edge get no images, only the record.
+Height is the median of the national laser-scanning surface model inside the footprint minus the terrain model (1,039 buildings).
+The roof lies 0.96\,$\times$\,height from the base: we matched roof texture across the four views and divided the shift by that height (median 0.96 over 61 buildings on the first sheet and 0.95 over 28 on the others).
 
-The photos are georeferenced, so BDOT10k outlines can be drawn on them.
-A building gets up to 4 views and 4 facades, which are crops with a wall rectified to a rectangle (Figure~\ref{fig:karta}); 30 buildings at the edge get no images, only the record.
-Height is the median of the national laser-scanning surface model inside the footprint minus the terrain model (340 buildings).
-The roof lies 0.96\,$\times$\,height from the base: we matched roof texture across the four views and divided the shift by that height (median over 61 buildings).
-Height is used for drawing and cropping, and by the volume baseline.
+SRLM \citep{szmytkie2023srlm} estimates actual residents at the end of 2022, 893,506 in the city, from registrations, dwelling counts and dormitory beds, and uses BDOT10k floor area only in a few regions without registrations.
+No agent sees it; we use it once, for the final evaluation.
 
 \begin{figure*}[t]
   \centering
@@ -107,12 +101,10 @@ Height is used for drawing and cropping, and by the volume baseline.
 
 Figure~\ref{fig:architektura} shows the system.
 Each agent is one stateless model call answering in JSON forced by a schema, and code holds the state.
-Every call is logged with its prompt, tokens, cost and time.
-The prompts, in Polish, are in the repository.
+The code calls Claude through its API or any VLM served by vLLM, and logs every call, so an interrupted run resumes from the log; the prompts, in Polish, are in the repository.
 
 \paragraph{Witness.}
-It gets the images and, if the run shows it, the BDOT10k record.
-It returns the type, storeys, residential share (0 to 1), state, confidence and a rationale, and it does not estimate residents.
+It gets the images and, if the run shows it, the BDOT10k record, and returns the type, storeys, residential share (0 to 1), state, confidence and a rationale, but not residents.
 
 \paragraph{Formula.}
 A building not in use, or of a type without flats, gets 0.
@@ -121,10 +113,9 @@ Otherwise:
   \text{house} &= \text{residents per house} \times \text{share} \\
   \text{other} &= \frac{\text{footprint} \times \text{storeys} \times \text{share}}{\text{m}^2\text{ per person}}
 \end{align*}
-Footprint and storeys come from BDOT10k; the witness's storeys are used only when missing (9 of 341).
+Footprint and storeys come from BDOT10k; the witness's storeys are used only when missing.
 Table~\ref{tab:rubryka} gives the constants.
-The first two come from Kraków, with the same database, the same floor area and similar housing: at the end of 2024 GUS gives 33.4\,m$^2$ of usable area per person there and 34.6\,m$^2$ in Wrocław.
-The third is the weakest, as it comes from a US trade survey.
+The first two come from Kraków, with the same database and similar housing (GUS, 2024: 33.4\,m$^2$ of usable area per person there, 34.6\,m$^2$ in Wrocław); the third, from a US trade survey, is the weakest.
 
 \begin{table}[t]
   \centering
@@ -146,94 +137,87 @@ The third is the weakest, as it comes from a US trade survey.
 In at most two rounds, code rescales the estimates so that their sum matches the census and flags a cell that differs more than 1.5 times and by at least 25 people.
 The agent reads these cells as text, plus any building where the witness contradicts the record on whether anyone lives there, and chooses what to ask.
 It sees no images and changes no numbers.
-A filter in code allows one question per building per round, at most 20 per round, and strips digits so that census figures never reach the witness.
+The agent reads at most 25 cells per call, and a filter in code allows one question per building per round, at most 20 per call, and strips digits so that census figures never reach the witness.
 The witness changes its answer only if the image justifies it, and the formula then recomputes every estimate.
 
 \paragraph{Search agent.}
 Most residents and most of the error sit in a few large buildings.
-For at most 4 buildings per sheet, collective housing first and then the largest estimates, a model with web search gets the address and the record and looks for a published number of beds or flats, in at most 2 searches.
+For at most 4 buildings per sheet, collective housing first and then the largest estimates, a model with web search gets the addresses and the record and looks for a published number of beds or flats, in at most 2 searches.
 Beds replace the estimate, flats are multiplied by 1.71 persons, the 2024 GUS figure for Wrocław, and without a source for that very building the formula's result stays.
 
 \paragraph{One building.}
 A student dormitory has 1,466.6\,m$^2$ and 8 storeys in BDOT10k, and the witness answers collective housing with a share of 0.85, which gives 1,466.6 $\times$ 8 $\times$ 0.85 / 31 = 322 residents.
-The census has 33 people in that cell, so the cell is flagged.
-The agent asks about shops on the ground floor, the witness keeps its answer, and the estimate stays at 322.
+The census has 33 people in that cell, so it is flagged; the witness, asked about shops on the ground floor, keeps its answer, and the search agent finds 802 beds on the university's website.
 
-\section{Evaluation and Plan}
+\section{Evaluation}
 
-We have no true count for a single building, so we compare sums in complete cells with the census.
-We use the state before the loop, because afterwards the agent has seen the totals.
+We have no true count for a single building, so we compare sums with two references.
+In complete census cells we use the state before the loop, because afterwards the agent has seen the totals.
+At the end we compare sums with SRLM in every region whose residential floor area (BDOT10k, footprint $\times$ storeys) has an estimate for at least 95\%; a building on a border counts by the share of its footprint.
 
-\textbf{Spearman} compares only the order: we rank the cells by census and by estimate.
-1 means the same order and 0 no relation; census 10, 20, 30 with estimates 100, 200, 300 gives 1.
-\textbf{WAPE} measures the error in people: we rescale the estimates to the census total, add up the absolute errors and divide by that total.
-Census 100, 100 with estimates 150, 50 gives (50 + 50) / 200 = 0.5.
-Zero is perfect, and half of WAPE is the share of people in the wrong cell.
-Brackets give 95\% bootstrap intervals over cells.
+\textbf{Spearman} compares only the order of units (1: same order, 0: no relation).
+\textbf{WAPE} rescales the estimates to the reference total and divides the sum of absolute errors by that total: reference 100, 100 with estimates 150, 50 gives 0.5, and half of WAPE is the share of people in the wrong unit.
+Against SRLM we also report the \textbf{level}, the estimated total divided by the SRLM total, since SRLM counts actual residents.
+Brackets give 95\% bootstrap intervals over units.
 
 The baselines use no model: volume (footprint $\times$ height) and volume $\times$ BDOT, which is 0 for buildings not residential or not in use.
-We plan to vary the information shown (with or without the record, no images, another building's images; RQ1), the loop (off, on, shuffled census totals; RQ2) and the model, including an open-weight one such as Qwen \citep{bai2025qwen} (RQ3).
-We will also measure F1 for ``does anyone live here'' against BDOT10k with the record hidden, plus calls, tokens, cost and time.
+Against SRLM the baseline distributes the census population of the complete cells by volume, and we also show the census itself split between regions by area.
 
-\section{Pilot}
+\section{Results on Five Sheets}
 
-Haiku 5.5 with the record, images and the loop processed 341 buildings in 350 calls for 0.31 USD (median 6.6\,s per witness call).
-It estimates 8,942 residents in 247 buildings (Figure~\ref{fig:szacunki}).
+Haiku 5.5 with the record, images and the loop processed 1,044 buildings for 1.12 USD of new calls and estimates 27,505 residents (Figure~\ref{fig:szacunki}).
 
 \begin{table}[t]
   \centering
   \footnotesize
-  \begin{tabular}{@{}lll@{}}
+  \begin{tabular}{@{}lllll@{}}
     \toprule
-    Estimate & Spearman & WAPE \\
+    & \multicolumn{2}{l}{82 census cells} & \multicolumn{2}{l}{5 SRLM regions} \\
+    Estimate & Spearman & WAPE & Level & WAPE \\
     \midrule
-    Volume & 0.32 [$-$0.34, 0.85] & 0.48 [0.14, 0.89] \\
-    Volume $\times$ BDOT & 0.84 [0.47, 0.97] & 0.21 [0.11, 0.31] \\
-    Haiku, before loop & 0.89 [0.58, 1.00] & 0.17 [0.09, 0.28] \\
+    Volume & 0.51 & 0.59 & & \\
+    Volume $\times$ BDOT & 0.89 & 0.29 & 0.62 & 0.14 \\
+    Haiku, before loop & 0.86 & 0.28 & 0.85 & 0.05 \\
+    Census split by area & & & 0.61 & 0.24 \\
     \bottomrule
   \end{tabular}
-  \caption{Sums against the census on 14 complete cells.}
-  \label{tab:kwadraty}
+  \caption{Sums on the five sheets against the census (complete cells) and SRLM (fully covered regions, 20,010 residents).}
+  \label{tab:wyniki}
 \end{table}
 
 \begin{figure}[t]
   \centering
-  \includegraphics[width=\columnwidth]{sumy}
-  \caption{Rescaled estimates against the census. Label: the dormitory cell.}
-  \label{fig:sumy}
-\end{figure}
-
-\begin{figure}[t]
-  \centering
   \includegraphics[width=\columnwidth]{szacunki}
-  \caption{Estimated residents per building. An estimate, not a measurement.}
+  \caption{Estimated residents per building on the five sheets. An estimate, not a measurement.}
   \label{fig:szacunki}
 \end{figure}
 
-Haiku is level with the baseline (Table~\ref{tab:kwadraty}, Figure~\ref{fig:sumy}): the difference is $+0.05$ [$0.00$, $+0.21$] in Spearman and $-0.03$ [$-0.09$, $+0.03$] in WAPE.
-In the dormitory cell the census has 33, the baseline 134 and Haiku 185 after rescaling.
-The census counts place of residence, so some students may not be assigned to the dormitory.
-Before rescaling, the estimate on these cells is 5,828 against 5,145 in the census (+13\%).
+Against the census Haiku is level with the baseline (Table~\ref{tab:wyniki}): the difference is $-0.04$ [$-0.10$, $+0.01$] in Spearman and $-0.01$ [$-0.05$, $+0.05$] in WAPE.
+Before rescaling, the estimate on these cells is 24,250 against 18,218 in the census (+33\%).
+The loop flagged 21 of 82 cells in every round and changed 4 of the 12 descriptions it asked about (27,580 to 27,505 residents).
+The search agent checked 20 buildings for 0.43 USD and found a number for 6, two of them doubtful (a table row without headers, guest beds).
 
-The witness adds little while it sees the record: BDOT10k alone with the same constants gives 0.87 and 0.20.
+Against SRLM the estimate comes much closer in level than the census or the baseline, which inherits the census total (with search: 0.86); with five regions this shows only that the evaluation works.
 
-The loop flagged 1 of 14 cells, the dormitory.
-The agent asked about 7 buildings and 2 descriptions changed; one block first described as services gained 18 residents.
-The search agent (4 buildings, 0.09 USD) found no number: only 93 of 341 buildings have an address in OpenStreetMap and none of the four did.
+\section{Plan}
 
-\section{Limitations and Next Steps}
+The final run covers the whole city: 826 sheets from the 2025 flight, which cover 99.97\% of Wrocław, with 70,322 buildings in BDOT10k.
+The witness and the balancing agent run on Qwen3.8-27B on our own server; the search agent stays on Claude Haiku, which has web search.
+Prompts and constants are frozen first, and SRLM is evaluated once, on all regions that pass the coverage rule.
+Ablations for RQ1 and RQ2 (record hidden, no images, another building's images, loop off or fed shuffled census totals) run on a sample of regions, RQ3 compares Qwen with Haiku on the same buildings, and with the record hidden we report F1 for ``does anyone live here'' against BDOT10k.
+
+\section{Limitations}
 
 A per-building number is the output of a formula, not a measurement.
-The evidence is one sheet without houses and 14 cells, each run was done once, although identical runs at temperature 0 can differ in accuracy by up to 15\% \citep{atil2024nondeterminism}, and we adjusted the estimator and the agent prompt after a first pass on this sheet.
+The evidence so far is one district, each run was done once, although identical runs at temperature 0 can differ in accuracy by up to 15\% \citep{atil2024nondeterminism}, and we adjusted the estimator and the agent prompt after a first pass on the first sheet.
 The constants come from another city and, for collective housing, another country.
-
-Next we will add address points, then run the plan on more sheets, including areas with houses, and on an open-weight model once we have a server.
+SRLM is itself an estimate for 2022, the census is from 2021 and the photos from 2025, and SRLM takes dormitory beds from the web, as our search agent does.
 
 Code and notebooks: \url{https://github.com/wust-terrain/wroclaw-population-agents}.
 \todo{authors: add an AI-use statement and verify all sources. Drafted with Claude Code and Scientific Agent Skills (Kassis et al., 2026, arXiv:2609.00065).}
 
 % Bibliografia wklejona, żeby nie dodawać pliku .bib. Metadane sprawdzone w Crossref, OpenAlex, na arXiv i Hugging Face.
-\begin{thebibliography}{13}
+\begin{thebibliography}{15}
 \providecommand{\natexlab}[1]{#1}
 
 \bibitem[{Abramson(2014)}]{abramson2014home}
@@ -245,11 +229,6 @@ Paul Abramson. 2014.
 Berk Atil, Sarp Aykent, Alexa Chittams, Lisheng Fu, and others. 2024.
 \newblock Non-determinism of ``deterministic'' {LLM} settings.
 \newblock ArXiv:2408.04667.
-
-\bibitem[{Bai et~al.(2025)}]{bai2025qwen}
-Shuai Bai, Keqin Chen, Xuejing Liu, Jialin Wang, and others. 2025.
-\newblock {Qwen2.5-VL} technical report.
-\newblock ArXiv:2502.13923. Weights of the 7B model are released under Apache-2.0 on Hugging Face.
 
 \bibitem[{Ca{\l}ka et~al.(2016)Ca{\l}ka, Bielecka, and
   Zdunkiewicz}]{calka2016redistribution}
@@ -317,6 +296,16 @@ Tomasz Pirowski and Bart{\l}omiej Szypu{\l}a. 2024.
   population mapping using building data}.
 \newblock \emph{Annals of the American Association of Geographers},
   114(5):1001--1019.
+
+\bibitem[{Qwen Team(2026)}]{qwen2026}
+Qwen Team. 2026.
+\newblock {Qwen3.8-27B}.
+\newblock Model card, \url{https://huggingface.co/Qwen/Qwen3.8-27B}.
+
+\bibitem[{Szmytkie et~al.(2023)}]{szmytkie2023srlm}
+Robert Szmytkie, Piotr Kryczka, Agnieszka Lisowska-Kierepka, and Katarzyna Kuzara. 2023.
+\newblock Szacowanie rzeczywistej liczby mieszkańców Wrocławia.
+\newblock Report for the City of Wrocław, University of Wrocław, \url{https://bip.um.wroc.pl/artykul/565/70661}.
 
 \bibitem[{Tan(2026)}]{tan2026streetview}
 Kaizhen Tan. 2026.

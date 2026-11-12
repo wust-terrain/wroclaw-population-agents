@@ -30,7 +30,9 @@ from agenci.swiadkowie import OPIS, SCHEMAT_OBSERWACJI, dopytaj_swiadka
 from ortofoto.arkusze import zasieg
 
 RUNDY = 2  # Du i in. 2024
-MAX_PYTAN = 20  # najwięcej tyle dopytań świadka w rundzie (limit kosztu)
+MAX_PYTAN = 20  # najwięcej tyle dopytań świadka z jednego wywołania agenta (limit kosztu)
+PACZKA = 25  # najwięcej tyle kwadratów z flagą w jednym wywołaniu agenta (ok. 90 tys. tokenów; całe miasto ma ich tysiące)
+PACZKA_SPRZECZNYCH = 50  # i tyle budynków sprzecznych z rekordem
 PROG_ILORAZU = 1.5  # kwadrat ma rozjazd, gdy szacunek różni się od spisu ponad tyle razy...
 MIN_OSOB = 25  # ...i o co najmniej tyle osób; przy idealnym świadku daje to 2 flagi na 14 kwadratów arkusza
 DIAGNOZY = ["blad_swiadka", "nowa_zabudowa", "rubryka", "szum_spisu", "nieznana"]
@@ -117,11 +119,12 @@ def _opis_budynku(budynek, obs, karta, szacunek, z_rekordem):
             f"szacunek {szacunek:.0f} os.")
 
 
-def opis_bilansu(b, obs, karty, m, u, sprzeczne, z_rekordem, historia):
-    """Treść promptu agenta bilansującego; rekord BDOT10k tylko wtedy, gdy przebieg go widzi."""
+def opis_bilansu(b, obs, karty, m, u, sprzeczne, z_rekordem, historia, kody=None):
+    """Treść promptu agenta bilansującego dla kwadratów `kody` (domyślnie wszystkich z flagą); rekord BDOT10k tylko wtedy,
+    gdy przebieg go widzi."""
     skala = b.skala.iloc[0] if len(b) else 1.0
     linie = [f"Rubryka: {OSOBY_NA_DOM} osoby na dom, m² na osobę: {M2_NA_OSOBE}. Szacunki pomnożone przez {skala:.2f}."]
-    for kod, k in b[b.flaga].iterrows():
+    for kod, k in b.loc[b.index[b.flaga] if kody is None else kody].iterrows():
         linie.append(f"\nKwadrat {kod}: spis 2021 {k.ludnosc:.0f} os., szacunek {k.szacunek:.0f} os., iloraz {k.iloraz:.2f}. Budynki:")
         linie += [_opis_budynku(i, obs[i], karty[i], m[i] * skala, z_rekordem) for i in u.xs(kod, level="kod").index]
     if sprzeczne:
@@ -133,9 +136,10 @@ def opis_bilansu(b, obs, karty, m, u, sprzeczne, z_rekordem, historia):
     return "\n".join(linie)
 
 
-def wazne_pytania(pytania, kandydaci, zadane):
-    """Pytania o kandydatów, jedno na budynek w rundzie, bez powtórek i najwyżej MAX_PYTAN; cyfry wycięte."""
-    wynik, budynki = [], set()
+def wazne_pytania(pytania, kandydaci, zadane, w_rundzie=None):
+    """Pytania o kandydatów, jedno na budynek w rundzie (w_rundzie: budynki już zapytane w tej rundzie), bez powtórek
+    i najwyżej MAX_PYTAN; cyfry wycięte."""
+    wynik, budynki = [], set() if w_rundzie is None else w_rundzie
     for p in pytania:
         klucz = p["budynek"], p["atrybut"]
         if p["budynek"] in kandydaci and p["budynek"] not in budynki and klucz not in zadane and len(wynik) < MAX_PYTAN:
@@ -143,6 +147,16 @@ def wazne_pytania(pytania, kandydaci, zadane):
             budynki.add(p["budynek"])
             wynik.append(p | {"pytanie": CYFRY.sub(lambda m: m[1] or "…", p["pytanie"])})
     return wynik
+
+
+def _paczki(kody, sprzeczne):
+    """Podział pracy agenta na wywołania: (kody kwadratów, budynki sprzeczne). Kwadraty po PACZKA, sprzeczne po PACZKA_SPRZECZNYCH;
+    pierwsza porcja sprzecznych dołącza do ostatniej paczki kwadratów, więc mały przebieg to jedno wywołanie."""
+    paczki = [[kody[i:i + PACZKA], []] for i in range(0, len(kody), PACZKA)]
+    porcje = [sprzeczne[i:i + PACZKA_SPRZECZNYCH] for i in range(0, len(sprzeczne), PACZKA_SPRZECZNYCH)]
+    if paczki and porcje:
+        paczki[-1][1] = porcje.pop(0)
+    return [tuple(p) for p in paczki] + [([], s) for s in porcje]
 
 
 def uzgodnij(klient, pred, bud, z_rekordem, obszar=None):
@@ -165,19 +179,29 @@ def uzgodnij(klient, pred, bud, z_rekordem, obszar=None):
         b = bilans(m, u, ludnosc)
         bilanse.append(b)
         sprzeczne = [i for i in obs if sprzeczny(obs[i], karty[i])] if z_rekordem else []
-        kandydaci = set(u.index.get_level_values("id")[u.index.get_level_values("kod").isin(b.index[b.flaga])]) | set(sprzeczne)
-        if not kandydaci:
-            break
-        dane = klient.zapytaj(rola="bilansujacy", system=SYSTEM_BILANSU, schemat=SCHEMAT_BILANSU, tresc=[
-            tekst(opis_bilansu(b, obs, karty, m, u, sprzeczne, z_rekordem, historia))]).dane
-        if dane is None:  # odmowa modelu: zostaje dotychczasowy wynik
+        paczki = _paczki(sorted(b.index[b.flaga]), sprzeczne)
+        if not paczki:
             break
 
-        dialog += [{"runda": runda, "rodzaj": "kwadrat", **k} for k in dane["kwadraty"] if k["kod"] in b.index]
-        nowe = set(dane["nowa_zabudowa"]) & set(obs)
-        nowa_zabudowa |= nowe
-        dialog += [{"runda": runda, "rodzaj": "nowa_zabudowa", "budynek": i} for i in sorted(nowe)]
-        pytania = wazne_pytania(dane["pytania"], kandydaci, zadane)
+        def jedna(paczka):
+            kody, sprz = paczka
+            kandydaci = set(u.index.get_level_values("id")[u.index.get_level_values("kod").isin(kody)]) | set(sprz)
+            hist = [t for i, t in historia if i in kandydaci]
+            dane = klient.zapytaj(rola="bilansujacy", system=SYSTEM_BILANSU, schemat=SCHEMAT_BILANSU, tresc=[
+                tekst(opis_bilansu(b, obs, karty, m, u, sprz, z_rekordem, hist, kody))]).dane
+            return kody, kandydaci, dane
+
+        with ThreadPoolExecutor(ROWNOLEGLE) as ex:
+            odpowiedzi_agenta = list(ex.map(jedna, paczki))
+        pytania, w_rundzie = [], set()
+        for kody, kandydaci, dane in odpowiedzi_agenta:
+            if dane is None:  # odmowa modelu: ta paczka zostaje z dotychczasowym wynikiem
+                continue
+            dialog += [{"runda": runda, "rodzaj": "kwadrat", **k} for k in dane["kwadraty"] if k["kod"] in kody]
+            nowe = set(dane["nowa_zabudowa"]) & set(obs)
+            nowa_zabudowa |= nowe
+            dialog += [{"runda": runda, "rodzaj": "nowa_zabudowa", "budynek": i} for i in sorted(nowe)]
+            pytania += wazne_pytania(dane["pytania"], kandydaci, zadane, w_rundzie)
         if not pytania:
             break
 
@@ -203,8 +227,8 @@ def uzgodnij(klient, pred, bud, z_rekordem, obszar=None):
         szacunki.append(oszacuj())
         for w in wiersze:
             w["mieszkancy_po"] = szacunki[-1][w["budynek"]]
-            historia.append(f"- runda {runda}, {w['budynek']} ({w['atrybut']}): {w['pytanie']} Odpowiedź: "
-                            f"{w['odpowiedz'] or w['blad']} Zmiana: {w['zmiana'] or 'brak'}.")
+            historia.append((w["budynek"], f"- runda {runda}, {w['budynek']} ({w['atrybut']}): {w['pytanie']} Odpowiedź: "
+                                           f"{w['odpowiedz'] or w['blad']} Zmiana: {w['zmiana'] or 'brak'}."))
         dialog += wiersze
 
     if len(bilanse) < len(szacunki):

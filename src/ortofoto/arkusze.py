@@ -2,16 +2,22 @@
 
 Każdy plik `*_N.tif`, `*_E.tif`, `*_S.tif`, `*_W.tif` to jeden arkusz widziany z jednego kierunku.
 Arkusze tego samego kierunku tworzą mozaikę, więc wycinek może przechodzić przez granicę arkuszy.
+Przy imporcie czytamy tylko zasięgi; plik otwieramy przy pierwszym odczycie, a każdy wątek ma własne uchwyty
+(GDAL nie pozwala czytać jednego uchwytu z wielu wątków naraz, a przy całym mieście plików są tysiące).
 """
 
-import atexit
+import threading
+from functools import cache
 from pathlib import Path
+from typing import NamedTuple
 
 import numpy as np
 import pandas as pd
 import rasterio
+import shapely
 from rasterio.enums import Resampling
 from rasterio.windows import from_bounds
+from shapely import STRtree
 from shapely.geometry import box
 from shapely.ops import unary_union
 
@@ -20,17 +26,58 @@ from ortofoto import DATA
 KIERUNKI = {"N": (0, 1), "E": (1, 0), "S": (0, -1), "W": (-1, 0)}  # kierunek patrzenia = kierunek przesunięcia dachu
 NA = {"N": "północ", "E": "wschód", "S": "południe", "W": "zachód"}
 ELEWACJE = {"N": "południowe", "E": "zachodnie", "S": "północne", "W": "wschodnie"}
+UCHWYTY = 64  # tyle otwartych plików najwyżej na wątek
 
-ARKUSZE = {k: [rasterio.open(p) for p in sorted(DATA.glob(f"*_{k}.tif"))] for k in KIERUNKI}
+
+class Arkusz(NamedTuple):
+    name: str  # ścieżka pliku
+    godlo: str
+    bounds: rasterio.coords.BoundingBox
+
+
+def _arkusze(kier):
+    wynik = []
+    for p in sorted(DATA.glob(f"*_{kier}.tif")):
+        with rasterio.open(p) as s:
+            wynik.append(Arkusz(str(p), p.stem.split("_")[-2], s.bounds))
+    return wynik
+
+
+ARKUSZE = {k: _arkusze(k) for k in KIERUNKI}
 ARKUSZE = {k: v for k, v in ARKUSZE.items() if v}
 KOLEJNOSC = list(ARKUSZE)  # kierunki, dla których jest choć jeden arkusz
-atexit.register(lambda: [s.close() for zrodla in ARKUSZE.values() for s in zrodla])  # przed sprzątaniem modułów
+_watki = threading.local()
 
 
+def _otworz(sciezka):
+    """Uchwyt pliku dla bieżącego wątku; najdawniej użyty zamykamy, gdy jest ich więcej niż UCHWYTY."""
+    uchwyty = _watki.__dict__.setdefault("uchwyty", {})
+    if sciezka in uchwyty:
+        uchwyty[sciezka] = uchwyty.pop(sciezka)  # na koniec kolejki: ostatnio użyty
+    else:
+        if len(uchwyty) >= UCHWYTY:
+            uchwyty.pop(next(iter(uchwyty))).close()
+        uchwyty[sciezka] = rasterio.open(sciezka)
+    return uchwyty[sciezka]
+
+
+@cache
 def zasieg(kier=None):
     """Obszar pokryty arkuszami jednego kierunku albo (kier=None) wszystkich razem."""
     zrodla = ARKUSZE[kier] if kier else [s for v in ARKUSZE.values() for s in v]
-    return unary_union([box(*s.bounds) for s in zrodla])
+    obszar = unary_union([box(*s.bounds) for s in zrodla])
+    shapely.prepare(obszar)  # szybkie within() przy każdym budynku
+    return obszar
+
+
+@cache
+def _drzewo(kier):
+    return STRtree([box(*a.bounds) for a in ARKUSZE[kier]])
+
+
+def _na(kier, bounds):
+    """Arkusze kierunku kier, które przecinają prostokąt bounds, w kolejności z ARKUSZE."""
+    return [ARKUSZE[kier][i] for i in sorted(_drzewo(kier).query(box(*bounds)))]
 
 
 def pokrywa(kier, bounds):
@@ -42,9 +89,9 @@ def opis_arkuszy():
     """Tabela z metadanymi wszystkich arkuszy."""
     wiersze = []
     for kier, zrodla in ARKUSZE.items():
-        for s in zrodla:
-            p = Path(s.name)
-            wiersze.append({"plik": p.name, "kierunek": kier, "godło": p.stem.split("_")[2], "MB": round(p.stat().st_size / 1e6),
+        for a in zrodla:
+            s, p = _otworz(a.name), Path(a.name)
+            wiersze.append({"plik": p.name, "kierunek": kier, "godło": a.godlo, "MB": round(p.stat().st_size / 1e6),
                             "CRS": str(s.crs), "rozmiar [px]": f"{s.width} × {s.height}", "piksel [m]": s.res[0],
                             "x od–do": f"{s.bounds.left:.0f}–{s.bounds.right:.0f}",
                             "y od–do": f"{s.bounds.bottom:.0f}–{s.bounds.top:.0f}",
@@ -58,13 +105,14 @@ def _mozaika(zrodla, bounds, res):
     x0, y0, x1, y1 = bounds
     out = np.full((round((y1 - y0) / res), round((x1 - x0) / res), 3), 255, np.uint8)
     pusty = np.ones(out.shape[:2], bool)
-    for src in zrodla:
-        ix0, iy0 = max(x0, src.bounds.left), max(y0, src.bounds.bottom)
-        ix1, iy1 = min(x1, src.bounds.right), min(y1, src.bounds.top)
+    for a in zrodla:
+        ix0, iy0 = max(x0, a.bounds.left), max(y0, a.bounds.bottom)
+        ix1, iy1 = min(x1, a.bounds.right), min(y1, a.bounds.top)
         c0, c1 = round((ix0 - x0) / res), round((ix1 - x0) / res)
         r0, r1 = round((y1 - iy1) / res), round((y1 - iy0) / res)
         if c1 <= c0 or r1 <= r0:
             continue
+        src = _otworz(a.name)
         img = src.read(window=from_bounds(ix0, iy0, ix1, iy1, transform=src.transform),
                        out_shape=(3, r1 - r0, c1 - c0), resampling=Resampling.average)
         wolne = pusty[r0:r1, c0:c1]
@@ -80,10 +128,10 @@ def czytaj(kier, bounds, res=0.1):
     Zwraca obraz (wiersze, kolumny, RGB) i extent do plt.imshow.
     """
     x0, y0, x1, y1 = bounds
-    return _mozaika(ARKUSZE[kier], bounds, res), (x0, x1, y0, y1)
+    return _mozaika(_na(kier, bounds), bounds, res), (x0, x1, y0, y1)
 
 
 def podklad(bounds, res=1.0):
     """Wycinek z dowolnego dostępnego kierunku (do map poglądowych)."""
     x0, y0, x1, y1 = bounds
-    return _mozaika([s for k in KOLEJNOSC for s in ARKUSZE[k]], bounds, res), (x0, x1, y0, y1)
+    return _mozaika([s for k in KOLEJNOSC for s in _na(k, bounds)], bounds, res), (x0, x1, y0, y1)

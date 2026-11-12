@@ -1,0 +1,7 @@
+# Próba przed całym miastem: 40 losowych budynków widocznych ze wszystkich kierunków, Qwen3.8-27B przez vLLM, bez pętli.
+opis = "próba: 40 budynków, rekord BDOT10k i obrazy, rubryka z literatury, Qwen3.8-27B"
+estymator = "wzor"
+model = "Qwen/Qwen3.8-27B"
+
+[budynki]
+liczba = 40
