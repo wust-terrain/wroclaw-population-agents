@@ -145,9 +145,9 @@ def wazne_pytania(pytania, kandydaci, zadane):
     return wynik
 
 
-def uzgodnij(klient, pred, bud, z_rekordem):
+def uzgodnij(klient, pred, bud, z_rekordem, obszar=None):
     """Pętla na predykcjach całego przebiegu; zwraca (predykcje z kolumnami rund, dialog, bilanse kwadratów po rundach)."""
-    miasto, kw = budynki_w_kwadratach(zasieg())
+    miasto, kw = budynki_w_kwadratach(obszar if obszar is not None else zasieg())
     obs = {r["budynek"]: {k: r[k] for k in SCHEMAT_OBSERWACJI["required"]} | {"kondygnacje": int(r["kondygnacje"])}
            for _, r in pred[pred.typ.notna()].iterrows()}
     karty = {b: zbuduj_karte(bud.loc[b], obrazy=False) for b in obs}

@@ -46,3 +46,17 @@ def test_szperacz_zmienia_szacunek_tylko_ze_zrodlem():
     assert z_sieci(znalezione | {"zrodlo": ""}) is None
     assert z_sieci(znalezione | {"znalezione": "brak"}) is None
     assert z_sieci(None) is None  # odmowa modelu
+
+
+def test_suma_w_rejonach_dzieli_budynek_na_granicy():
+    import geopandas as gpd
+    from shapely.geometry import box
+
+    from agenci.srlm import suma_w_rejonach
+
+    rejony = gpd.GeoDataFrame({"nazwa": ["A", "B"], "ludnosc": [1.0, 1.0]}, geometry=[box(0, 0, 10, 10), box(10, 0, 20, 10)], crs=2177)
+    rejony.index = pd.Index([30, 31], name="NR_REJ")
+    bud = gpd.GeoDataFrame(geometry=[box(2, 2, 4, 4), box(8, 2, 12, 4)], index=pd.Index(["w", "g"], name="id"), crs=2177)
+    s = suma_w_rejonach(pd.Series({"w": 10.0, "g": 100.0}), bud, rejony)
+    assert s.to_dict() == {30: 10.0 + 50.0, 31: 50.0}  # "g" leży po połowie w obu rejonach
+    assert s.sum() == 110.0
