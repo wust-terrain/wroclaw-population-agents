@@ -5,7 +5,8 @@ serwera zgodnego z API OpenAI pod adresem LOKALNY_URL (domyślnie vLLM na http:/
 ograniczona schematem JSON, a koszt to 0 USD.
 
 Każde wywołanie (prompt, odpowiedź, tokeny, koszt) trafia do tabeli `wywolania`. Identyczne zapytanie nie idzie drugi raz
-do API, więc powtórka przebiegu jest darmowa, o ile prompty i obrazy się nie zmieniły.
+do API, więc powtórka przebiegu jest darmowa, o ile prompty i obrazy się nie zmieniły. Wywołanie bez poprawnego JSON-a (odmowa,
+limit tokenów, zepsuty JSON) zostaje w logu, ale nie w pamięci: klient ponawia je do PROBY razy, a powtórka przebiegu znowu.
 
 Tryb na sucho nie łączy się z API i niczego nie zapisuje: zwraca odpowiedź zgodną ze schematem i szacuje koszt z rozmiaru
 promptu. Służy do sprawdzenia, czy kod działa, i do wyceny przebiegu przed uruchomieniem.
@@ -36,13 +37,14 @@ WYSZUKANIE_USD = 0.01  # cena jednego zapytania do wyszukiwarki (10 USD za 1000)
 Z_FALLBACKIEM = {"claude-opus-5-5", "claude-sonnet-5-5"}  # modele, dla których włączamy fallbacks: "default"
 EFFORT = "medium"
 MAX_TOKENS = 16000
+PROBY = 5  # tyle razy najwyżej wysyłamy zapytanie, zanim uznamy, że model nie da odpowiedzi
 ROWNOLEGLE = int(os.environ.get("ROWNOLEGLE", 4))  # tyle wywołań modelu naraz; dla lokalnego serwera więcej, np. 32
 LOKALNY_URL = os.environ.get("LOKALNY_URL", "http://localhost:8000/v1")  # serwer zgodny z API OpenAI dla modeli spoza Claude
 
 
 @dataclass
 class Odpowiedz:
-    dane: dict | None  # JSON zgodny ze schematem albo None, gdy model odmówił
+    dane: dict | None  # JSON zgodny ze schematem albo None, gdy po PROBY próbach nie było poprawnej odpowiedzi
     koszt_usd: float
     stop: str
 
@@ -65,6 +67,14 @@ def _do_logu(tresc):
     """Prompt w logu: tekst w całości, obrazy jako skrót (żeby baza nie puchła)."""
     return "\n".join(b["text"] if b["type"] == "text" else f"[obraz, sha1 {hashlib.sha1(b['source']['data'].encode()).hexdigest()[:10]}]"
                      for b in tresc)
+
+
+def _json(t):
+    """JSON z odpowiedzi modelu albo None, gdy się nie parsuje (np. ucięty)."""
+    try:
+        return json.loads(t)
+    except json.JSONDecodeError:
+        return None
 
 
 def _przyklad(schemat):
@@ -117,24 +127,30 @@ class Klient:
             {"model": self.model, "effort": EFFORT, "na_sucho": False, "system": system, "tresc": tresc, "schemat": schemat,
              "powtorzenie": 0} | ({"wyszukiwan": wyszukiwan} if wyszukiwan else {}), sort_keys=True, ensure_ascii=False).encode()).hexdigest()
         with self.blokada:
-            zapisana = self.db.execute("SELECT odpowiedz, koszt_usd, stop FROM wywolania WHERE klucz = ? LIMIT 1", (klucz,)).fetchone()
+            zapisana = self.db.execute("SELECT odpowiedz, koszt_usd, stop FROM wywolania WHERE klucz = ? AND odpowiedz IS NOT NULL "
+                                       "LIMIT 1", (klucz,)).fetchone()
         if zapisana:
             odpowiedz, koszt, stop = zapisana
-            return Odpowiedz(json.loads(odpowiedz) if odpowiedz else None, koszt, stop)
+            return Odpowiedz(json.loads(odpowiedz), koszt, stop)
 
-        start = time.perf_counter()
         wyslij = self._wyslij_lokalnie if self.lokalny else self._wyslij
-        dane, we, wy, model_odp, stop, szukan = wyslij(system, tresc, schemat, wyszukiwan)
-        czas = time.perf_counter() - start
-        cena_we, cena_wy = CENY.get(model_odp, CENY.get(self.model, (0.0, 0.0)))
-        koszt = (we * cena_we + wy * cena_wy) / 1e6 + szukan * WYSZUKANIE_USD
-        with self.blokada:
-            self.db.execute("""INSERT INTO wywolania (klucz, eksperyment, budynek, rola, model, model_odpowiedzi, system, prompt,
-                               odpowiedz, stop, tokeny_we, tokeny_wy, koszt_usd, czas_s) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                            (klucz, self.eksperyment, budynek, rola, self.model, model_odp, system, _do_logu(tresc),
-                             json.dumps(dane, ensure_ascii=False) if dane is not None else None, stop, we, wy, koszt, czas))
-            self.db.commit()
-        return Odpowiedz(dane, koszt, stop)
+        suma = 0.0
+        for _ in range(PROBY):  # model losuje, więc ponowione zapytanie zwykle daje poprawną odpowiedź
+            start = time.perf_counter()
+            dane, we, wy, model_odp, stop, szukan = wyslij(system, tresc, schemat, wyszukiwan)
+            czas = time.perf_counter() - start
+            cena_we, cena_wy = CENY.get(model_odp, CENY.get(self.model, (0.0, 0.0)))
+            koszt = (we * cena_we + wy * cena_wy) / 1e6 + szukan * WYSZUKANIE_USD
+            suma += koszt
+            with self.blokada:
+                self.db.execute("""INSERT INTO wywolania (klucz, eksperyment, budynek, rola, model, model_odpowiedzi, system, prompt,
+                                   odpowiedz, stop, tokeny_we, tokeny_wy, koszt_usd, czas_s) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                (klucz, self.eksperyment, budynek, rola, self.model, model_odp, system, _do_logu(tresc),
+                                 json.dumps(dane, ensure_ascii=False) if dane is not None else None, stop, we, wy, koszt, czas))
+                self.db.commit()
+            if dane is not None:
+                break
+        return Odpowiedz(dane, suma, stop)
 
     def _na_sucho(self, system, tresc, schemat, wyszukiwan=0):
         """Szacunek: ok. 3 znaki na token, ok. 800 tokenów na obraz, 1500 tokenów wyjścia z zapasem na myślenie, 10 tys. tokenów na wynik wyszukiwania."""
@@ -160,9 +176,7 @@ class Klient:
             if odp.stop_reason != "pause_turn":
                 break
             zapytanie["messages"] = [{"role": "user", "content": tresc}, {"role": "assistant", "content": odp.content}]
-        dane = None
-        if odp.stop_reason == "end_turn":
-            dane = json.loads([b.text for b in odp.content if b.type == "text"][-1])
+        dane = _json([b.text for b in odp.content if b.type == "text"][-1]) if odp.stop_reason == "end_turn" else None
         return dane, we, wy, odp.model, odp.stop_reason, szukan
 
     def _wyslij_lokalnie(self, system, tresc, schemat, wyszukiwan=0):
@@ -177,5 +191,5 @@ class Klient:
             response_format={"type": "json_schema", "json_schema": {"name": "odpowiedz", "schema": schemat}},
             extra_body={"chat_template_kwargs": {"reasoning_effort": EFFORT}})
         wybor = odp.choices[0]
-        dane = json.loads(wybor.message.content) if wybor.finish_reason == "stop" and wybor.message.content else None
+        dane = _json(wybor.message.content) if wybor.finish_reason == "stop" and wybor.message.content else None
         return dane, odp.usage.prompt_tokens, odp.usage.completion_tokens, odp.model, wybor.finish_reason, 0

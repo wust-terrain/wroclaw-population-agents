@@ -1,6 +1,0 @@
-# Baseline do pobicia: objętość budynków, które BDOT10k uznaje za mieszkalne i eksploatowane, 0 dla reszty.
-opis = "objętość × (mieszkalny i eksploatowany według BDOT10k)"
-estymator = "objetosc_bdot"
-
-[budynki]
-wszystkie = true

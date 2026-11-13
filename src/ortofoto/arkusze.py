@@ -8,11 +8,9 @@ Przy imporcie czytamy tylko zasięgi; plik otwieramy przy pierwszym odczycie, a 
 
 import threading
 from functools import cache
-from pathlib import Path
 from typing import NamedTuple
 
 import numpy as np
-import pandas as pd
 import rasterio
 import shapely
 from rasterio.enums import Resampling
@@ -25,7 +23,6 @@ from ortofoto import DATA
 
 KIERUNKI = {"N": (0, 1), "E": (1, 0), "S": (0, -1), "W": (-1, 0)}  # kierunek patrzenia = kierunek przesunięcia dachu
 NA = {"N": "północ", "E": "wschód", "S": "południe", "W": "zachód"}
-ELEWACJE = {"N": "południowe", "E": "zachodnie", "S": "północne", "W": "wschodnie"}
 UCHWYTY = 64  # tyle otwartych plików najwyżej na wątek
 
 
@@ -85,21 +82,6 @@ def pokrywa(kier, bounds):
     return kier in ARKUSZE and box(*bounds).within(zasieg(kier))
 
 
-def opis_arkuszy():
-    """Tabela z metadanymi wszystkich arkuszy."""
-    wiersze = []
-    for kier, zrodla in ARKUSZE.items():
-        for a in zrodla:
-            s, p = _otworz(a.name), Path(a.name)
-            wiersze.append({"plik": p.name, "kierunek": kier, "godło": a.godlo, "MB": round(p.stat().st_size / 1e6),
-                            "CRS": str(s.crs), "rozmiar [px]": f"{s.width} × {s.height}", "piksel [m]": s.res[0],
-                            "x od–do": f"{s.bounds.left:.0f}–{s.bounds.right:.0f}",
-                            "y od–do": f"{s.bounds.bottom:.0f}–{s.bounds.top:.0f}",
-                            "kafelki": s.block_shapes[0], "kompresja": s.tags(ns="IMAGE_STRUCTURE")["COMPRESSION"],
-                            "piramidy": s.overviews(1)})
-    return pd.DataFrame(wiersze).set_index("plik")
-
-
 def _mozaika(zrodla, bounds, res):
     """Skleja wycinek z kilku arkuszy; piksele bez pokrycia są białe, wcześniejszy arkusz ma pierwszeństwo."""
     x0, y0, x1, y1 = bounds
@@ -129,9 +111,3 @@ def czytaj(kier, bounds, res=0.1):
     """
     x0, y0, x1, y1 = bounds
     return _mozaika(_na(kier, bounds), bounds, res), (x0, x1, y0, y1)
-
-
-def podklad(bounds, res=1.0):
-    """Wycinek z dowolnego dostępnego kierunku (do map poglądowych)."""
-    x0, y0, x1, y1 = bounds
-    return _mozaika([s for k in KOLEJNOSC for s in _na(k, bounds)], bounds, res), (x0, x1, y0, y1)

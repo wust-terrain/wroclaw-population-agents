@@ -1,17 +1,19 @@
 """Estymatory liczby mieszkańców budynku.
 
-objetosc      - baseline: powierzchnia zabudowy × wysokość (wynik względny, bez modelu)
-objetosc_bdot - jak wyżej, ale 0 dla budynków, które BDOT10k uznaje za niemieszkalne albo nieużytkowane
+objetosc_bdot - baseline bez modelu: powierzchnia zabudowy × wysokość (wynik względny), 0 dla budynków, które BDOT10k uznaje
+                za niemieszkalne albo nieużytkowane
 ze_wzoru      - obserwacje świadka × rubryka:
-                dom:                     mieszkańcy = OSOBY_NA_DOM × udział mieszkalny
-                wielorodzinny, zbiorowy: mieszkańcy = powierzchnia zabudowy × kondygnacje × udział mieszkalny / M2_NA_OSOBE[klasa]
+                dom:                     mieszkańcy = OSOBY_NA_DOM × udział mieszkalny × gęstość
+                wielorodzinny, zbiorowy: mieszkańcy = powierzchnia zabudowy × kondygnacje × udział mieszkalny × gęstość / M2_NA_OSOBE[klasa]
+z_rekordu     - ta sama rubryka z klasą z BDOT10k i oboma mnożnikami równymi 1; wynik zapasowy, gdy świadek nie odpowie
 
 W domach jednorodzinnych liczba mieszkańców słabo zależy od powierzchni, więc liczymy osoby na budynek (Pirowski
-i Bartos 2018). Kondygnacje bierzemy z BDOT10k, a od świadka tylko wtedy, gdy BDOT ich nie ma: zero-shot VLM myli się
-średnio o ok. 2,4 kondygnacji (OpenFACADES). Wzór bierze je z BDOT także w przebiegach, w których świadek nie widzi
-rekordu, więc obraz wnosi do wyniku typ, udział mieszkalny i stan.
+i Bartos 2018). Kondygnacje są z BDOT10k (mają je wszystkie budynki mieszkalne), a gdy ich brak, z wysokości z LiDAR-u.
 
-Rubryka to stałe z literatury. Wzór nie potrzebuje sumy kwadratu, więc działa też dla osiedli oddanych po 2021 roku.
+Rubryka to stałe z literatury, liczone na całej powierzchni brutto budynków mieszkalnych, razem z klatkami i lokalami
+usługowymi (Pirowski i Bartos 2018, wz. 1 i s. 468). Świadek doważa je dwoma mnożnikami: udział mieszkalny (0-1, 1 to typowy
+budynek tej klasy) i gęstość (1 to typowo, więcej przy mikrokawalerkach, mniej przy dużych mieszkaniach). Wzór nie potrzebuje
+sumy kwadratu, więc działa też dla osiedli oddanych po 2021 roku.
 """
 
 OSOBY_NA_DOM = 2.88  # Pirowski i Bartos 2018, tab. 1, wariant 3 (Kraków, BDOT10k); to samo Pirowski i Szypuła 2024
@@ -41,28 +43,33 @@ def klasa_bdot(funkcja):
     return "wielorodzinny" if funkcja == "budynek wielorodzinny" else "zbiorowy"  # zbiorowy: dom studencki, dom opieki, internat, klasztor, koszary itd.
 
 
-def objetosc(karta):
-    return karta.pow_zabudowy_m2 * karta.h_m
-
-
 def objetosc_bdot(karta):
     """Objętość budynków mieszkalnych i eksploatowanych według BDOT10k, 0 dla pozostałych."""
-    return objetosc(karta) if karta.zamieszkany_bdot else 0.0
+    return karta.pow_zabudowy_m2 * karta.h_m if karta.zamieszkany_bdot else 0.0
 
 
-def ze_wzoru(obs, karta, z_rekordem=False):
-    """Liczba mieszkańców z obserwacji świadka i rubryki.
-
-    z_rekordem - przebieg widzi rekord BDOT10k. Typ "inny" znaczy też, że świadek nie umie określić typu (np. nie ma zdjęć),
-    więc gdy rekord mówi o budynku mieszkalnym i eksploatowanym, klasę bierzemy z rekordu. Bez tabeli rekord nie może
-    podsuwać wyniku, bo kontrola świadka z BDOT10k byłaby kolista.
-    """
-    if obs["stan"] != "uzytkowany":
-        return 0.0
-    k = klasa_bdot(karta.funkcja) if z_rekordem and obs["typ"] == "inny" and karta.zamieszkany_bdot else klasa(obs["typ"])
+def _rubryka(k, karta):
+    """Mieszkańcy budynku klasy k według samej rubryki, czyli przy obu mnożnikach równych 1; None to budynek niemieszkalny."""
     if k is None:
         return 0.0
     if k == "dom":
-        return OSOBY_NA_DOM * obs["udzial_mieszkalny"]
-    kondygnacje = karta.kondygnacje or obs["kondygnacje"] or max(1, round(karta.h_m / 3))  # BDOT10k, świadek, wysokość
-    return karta.pow_zabudowy_m2 * kondygnacje * obs["udzial_mieszkalny"] / M2_NA_OSOBE[k]
+        return OSOBY_NA_DOM
+    kondygnacje = karta.kondygnacje or max(1, round(karta.h_m / 3))
+    return karta.pow_zabudowy_m2 * kondygnacje / M2_NA_OSOBE[k]
+
+
+def z_rekordu(karta):
+    """Rubryka z klasą z BDOT10k: 0 dla budynków niemieszkalnych albo nieeksploatowanych."""
+    return _rubryka(klasa_bdot(karta.funkcja), karta) if karta.zamieszkany_bdot else 0.0
+
+
+def ze_wzoru(obs, karta):
+    """Liczba mieszkańców z obserwacji świadka i rubryki.
+
+    Typ "inny" znaczy też, że świadek nie umie określić typu (np. nie ma zdjęć), więc gdy rekord mówi o budynku mieszkalnym
+    i eksploatowanym, klasę bierzemy z rekordu.
+    """
+    if obs["stan"] != "uzytkowany":
+        return 0.0
+    k = klasa_bdot(karta.funkcja) if obs["typ"] == "inny" and karta.zamieszkany_bdot else klasa(obs["typ"])
+    return _rubryka(k, karta) * obs["udzial_mieszkalny"] * obs["gestosc"]

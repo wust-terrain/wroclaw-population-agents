@@ -2,8 +2,9 @@
 
 Moduły:
     arkusze  - pliki GeoTIFF z data/ i czytanie z nich wycinków
-    budynki  - obrysy budynków z OSM i ich wysokość
-    wycinki  - wycinek budynku z każdego kierunku, wyprostowana fasada, eksport dla agenta
+    budynki  - budynki z BDOT10k, ich wysokość z LiDAR-u i adresy z punktów adresowych OSM
+    wycinki  - kadr budynku z każdego kierunku, dach przesunięty od kamery, wyprostowana fasada
+    pobierz  - arkusze ze skorowidza GUGiK
 """
 
 import os

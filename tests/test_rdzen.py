@@ -2,7 +2,7 @@
 
 import pandas as pd
 
-from agenci.estymatory import ze_wzoru
+from agenci.estymatory import z_rekordu, ze_wzoru
 from agenci.karta import Karta
 from agenci.petla import bilans, wazne_pytania
 from agenci.szperacz import z_sieci
@@ -11,21 +11,22 @@ KARTA = Karta(id="a", pow_zabudowy_m2=100.0, h_m=12.0, zrodlo_h="z kondygnacji",
               funkcje="budynek wielorodzinny", kategoria="eksploatowany", mieszkalny_bdot=True)
 
 
-def obs(typ, udzial=1.0, stan="uzytkowany"):
-    return {"typ": typ, "kondygnacje": 9, "udzial_mieszkalny": udzial, "stan": stan}
+def obs(typ, udzial=1.0, stan="uzytkowany", gestosc=1.0):
+    return {"typ": typ, "udzial_mieszkalny": udzial, "gestosc": gestosc, "stan": stan}
 
 
 def test_wzor():
-    assert ze_wzoru(obs("kamienica", 0.5), KARTA) == 100 * 4 * 0.5 / 37.08  # kondygnacje z BDOT10k, nie od świadka
+    assert ze_wzoru(obs("kamienica", 0.5), KARTA) == 100 * 4 * 0.5 / 37.08  # kondygnacje z BDOT10k
+    assert ze_wzoru(obs("blok_nowy", gestosc=2.0), KARTA) == 100 * 4 * 2.0 / 37.08  # mikrokawalerki: gęściej niż typowo
     assert ze_wzoru(obs("zbiorowy"), KARTA) == 100 * 4 / 31.0
-    assert ze_wzoru(obs("dom_jednorodzinny"), KARTA) == 2.88
+    assert ze_wzoru(obs("dom_jednorodzinny", gestosc=2.0), KARTA) == 2.88 * 2  # dom z dwoma mieszkaniami
+    assert z_rekordu(KARTA) == 100 * 4 / 37.08  # wynik zapasowy: klasa z BDOT10k, mnożniki 1
     assert ze_wzoru(obs("uslugi"), KARTA) == 0.0
     assert ze_wzoru(obs("kamienica", stan="pustostan"), KARTA) == 0.0
-    assert ze_wzoru(obs("inny"), KARTA) == 0.0  # bez rekordu typ "inny" nic nie znaczy...
-    assert ze_wzoru(obs("inny"), KARTA, z_rekordem=True) == 100 * 4 / 37.08  # ...a z rekordem klasę bierzemy z BDOT10k
+    assert ze_wzoru(obs("inny"), KARTA) == 100 * 4 / 37.08  # typ "inny" w budynku mieszkalnym: klasa z BDOT10k
 
 
-def test_bilans_skaluje_do_sumy_spisu_i_flaguje_rozklad():
+def test_bilans_porownuje_ze_spisem_bez_skalowania():
     u = pd.Series({("a", "k1"): 0.5, ("a", "k2"): 0.5}).rename_axis(["id", "kod"])  # budynek leży po połowie w dwóch kwadratach
     b = bilans(pd.Series({"a": 400.0}), u, pd.Series({"k1": 100, "k2": 300}))
     assert b.szacunek.sum() == 400

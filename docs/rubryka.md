@@ -1,6 +1,6 @@
-# Pirowski i współautorzy: dasymetryczna estymacja populacji z BDOT10k
+# Skąd są stałe rubryki: Pirowski i współautorzy
 
-Notatka pogłębiona do `przeglad-literatury.md`, sekcja 1.1.
+Dwie z trzech stałych w `src/agenci/estymatory.py` (2,88 osoby na dom jednorodzinny i 37,08 m² powierzchni brutto na osobę w budynkach wielorodzinnych) pochodzą z prac Pirowskiego o Krakowie. Notatka mówi, jak je policzono, żeby było jasne, co znaczą: 37,08 m² to cała powierzchnia brutto budynku mieszkalnego (obrys × kondygnacje), razem z klatkami i lokalami usługowymi, na jednego zameldowanego mieszkańca. Dlatego świadek daje udział mieszkalny 1 typowemu budynkowi ze sklepem w parterze.
 
 ## Co faktycznie przeczytano
 
@@ -9,11 +9,9 @@ Notatka pogłębiona do `przeglad-literatury.md`, sekcja 1.1.
 | **Pirowski, Bartoś (2018)**, *Detailed mapping of the distribution of a city population based on information from the national database on buildings*, Geodetski vestnik 62(3), 458–471, [DOI](https://doi.org/10.15292/geodetski-vestnik.2018.03.458-471), [PDF](https://www.geodetski-vestnik.com/arhiv/62/3/gv62-3_pirowski.pdf) | **Cały tekst** (open access). Nazwisko w artykule pisane „Bartos". |
 | **Pirowski, Szypuła (2024)**, *Dasymetric Population Mapping Using Building Data*, Annals of the AAG 114(5), 1001–1019, [DOI](https://doi.org/10.1080/24694452.2024.2313500) | **Tylko abstrakt** ([RePEc](https://ideas.repec.org/a/taf/raagxx/v114y2024i5p1001-1019.html)). Strony wydawcy zwracają 403, pełny tekst za paywallem, otwartej kopii nie znaleźliśmy. Potrzebny dostęp przez bibliotekę uczelni. |
 
-Praca z 2018 r. jest bezpośrednim poprzednikiem pracy z 2024 r. (ten sam pierwszy autor, ten sam obszar badań i te same dane), a **ta sama liczba 2,88 oraz 37 m²/os. występuje w obu**. Opis wersji 2024 poniżej to tylko to, co mówi abstrakt, plus ostrożne wnioskowanie z 2018.
+Praca z 2018 r. jest bezpośrednim poprzednikiem pracy z 2024 r. (ten sam pierwszy autor, ten sam obszar badań i te same dane), a **ta sama liczba 2,88 oraz 37 m²/os. występuje w obu**. Opis wersji 2024 poniżej to tylko to, co mówi abstrakt.
 
-## Korekta wcześniejszego opisu
-
-W `przeglad-literatury.md` napisałem, że najlepszy wariant z 2024 r. dał ok. 21,9% MAPE. To było błędne. Według abstraktu:
+Wyniki z abstraktu (2024):
 
 | Wariant (siatka 1 × 1 km) | MAPE | RMSE (osoby) |
 |---|---|---|
@@ -83,17 +81,3 @@ Wnioski autorów:
 Czego nie wiemy bez pełnego tekstu: rok danych populacyjnych, użyte klasy BDOT10k, skąd pochodzi „prawda" dla siatki 1 km (to kluczowe dla oceny błędu 19,2%), liczba komórek, wyniki wszystkich 19 wariantów, ograniczenia.
 
 ---
-
-## Co z tego wynika dla naszego projektu
-
-1. **Dobry, konkretny baseline klasyczny.** Wariant 2 (84 / 37 m²/os.) lub wariant 3 (2,88 os. na dom + 37 m²/os.) można zaimplementować bez modelu. Proponuję dodać go obok `objetosc` i `objetosc_bdot` jako punkt odniesienia „literaturowy". Wartości są dopasowane do Krakowa 2012, więc dla Wrocławia trzeba je albo przyjąć jako prior, albo skalibrować.
-2. **Nasz agent bilansujący odpowiada współczynnikowi K(j.u.).** Różnica: u nich K to mnożnik stały na jednostkę, a u nas rozmowa agentów. Tu jest naturalne pytanie badawcze H2: czy agent robi coś więcej niż mnożnik? Mnożnik powinien być **dodatkowym baseline'em dla L3**, bo spełnia warunek Toblera i kosztuje zero.
-3. **Luka, którą wskazują sami autorzy, to nasza H1.** Brakuje informacji o parterze usługowym i udziale powierzchni niemieszkalnej. Obraz (fasady i widoki ukośne) może to dać: witryny, szyldy, wysokość parteru. Pasuje do pól `udział mieszkalny` w karcie budynku. To jest dobre uzasadnienie dla S2 względem S0.
-4. **Ryzyko ekwifinalności i przeuczenia.** Ich podział dzielnicowy dał ujemne powierzchnie, bo parametrów jest za dużo względem jednostek referencyjnych. U nas rubryka gęstości (L2) i kalibracja na sumach NSP mają tę samą słabość. Warto ograniczyć liczbę parametrów i testować na niezależnych danych (MPWiK, obwody wyborcze).
-5. **Metryki.** MAPE jest czytelne, ale przy małych jednostkach niestabilne. Można równolegle raportować WAPE (u nas już planowane) oraz Spearmana. Autorzy sami ostrzegają przed RMSE przy bardzo zróżnicowanych jednostkach.
-6. **Dane.** Używają BDOT10k jako jedynego źródła atrybutów budynku (funkcja, kondygnacje, powierzchnia), czyli dokładnie naszego S0. Pokrycie kondygnacji w BDOT10k dla Wrocławia mamy w notebooku (slajd z pokryciem danych) i warto je zestawić z ich założeniami.
-
-## Do zrobienia
-- Uzyskać pełny tekst Pirowski i Szypuła (2024) przez bibliotekę lub od autorów (AGH). Do przeczytania najpierw: skąd pochodzi „prawda" dla siatki 1 km oraz tabela wszystkich 19 wariantów.
-- Przeczytać Całka, Bielecka, Zdunkiewicz (2016) *Redistribution population data across a regular spatial grid according to buildings characteristics*, Geodesy and Cartography 65(2), 149–162 (cytowana w 2018 jako punkt wyjścia: błędy −10% do +25% przy gminach).
-- Wspomniane w 2018 prace do sprawdzenia: Bajat i in. (2013), podział budynków wg liczby kondygnacji; Lwin, Murayama (2009), populacja z obrysów; Ural i in. (2011), *Building population mapping with aerial imagery and GIS data* (obrazy lotnicze, najbliższe naszemu H1).

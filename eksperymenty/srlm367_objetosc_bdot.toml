@@ -1,6 +1,0 @@
-# Ocena na SRLM, rejon 367 (Piastowska, gęsta zabudowa kamienic): baseline bez API, powierzchnia × wysokość z zerem dla niemieszkalnych.
-opis = "SRLM rejon 367, baseline objetosc_bdot"
-estymator = "objetosc_bdot"
-
-[budynki]
-rejon = 367

@@ -1,8 +1,0 @@
-# Jak arkusz_haiku, ale bez pętli i ze szperaczem: dla zamieszkania zbiorowego i największych szacunków (najwyżej 4 budynki) model szuka w sieci liczby miejsc albo mieszkań.
-opis = "rekord BDOT10k i obrazy, rubryka z literatury, szperacz, Haiku 5.5"
-estymator = "wzor"
-szukaj = true
-model = "claude-haiku-5-5"
-
-[budynki]
-wszystkie = true

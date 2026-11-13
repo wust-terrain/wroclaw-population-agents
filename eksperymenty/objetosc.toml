@@ -1,6 +1,0 @@
-# Baseline: sama objętość z obrysu i wysokości, bez modelu.
-opis = "objętość"
-estymator = "objetosc"
-
-[budynki]
-wszystkie = true

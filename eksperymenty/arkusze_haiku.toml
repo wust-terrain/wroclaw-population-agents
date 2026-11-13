@@ -1,0 +1,7 @@
+# Cały system na trzech arkuszach wokół pl. Grunwaldzkiego (680 budynków) na tanim modelu: świadek, pętla ze spisem i szperacz.
+# Te arkusze pokrywają w całości rejony SRLM 27 (UWr 2), 28 (Politechnika) i 334 (Most Szczytnicki).
+opis = "3 arkusze: świadek, rubryka z literatury, pętla i szperacz na Haiku 5.5"
+estymator = "petla"
+szukaj = true
+model = "claude-haiku-5-5"
+arkusze = ["6.148.12.04.2", "6.148.12.04.4", "6.148.12.05.1"]

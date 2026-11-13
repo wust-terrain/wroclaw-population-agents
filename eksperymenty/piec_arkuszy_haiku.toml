@@ -1,7 +1,0 @@
-# Cały system na 5 arkuszach (6.148.12.04.2 i 4 sąsiednie): świadek, rubryka z literatury i pętla, Haiku 5.5.
-opis = "5 arkuszy: rekord BDOT10k i obrazy, rubryka z literatury, pętla, Haiku 5.5"
-estymator = "petla"
-model = "claude-haiku-5-5"
-
-[budynki]
-wszystkie = true

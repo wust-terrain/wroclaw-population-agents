@@ -1,6 +1,3 @@
 # Baseline na całym Wrocławiu: objętość budynków mieszkalnych i eksploatowanych według BDOT10k, 0 dla reszty.
 opis = "Wrocław: objętość × (mieszkalny i eksploatowany według BDOT10k)"
 estymator = "objetosc_bdot"
-
-[budynki]
-wszystkie = true

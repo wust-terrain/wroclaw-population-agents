@@ -1,10 +1,9 @@
-"""Budynki na arkuszach: obrysy i funkcja z BDOT10k, wysokość z lotniczego skaningu laserowego, adres z OpenStreetMap.
+"""Budynki na arkuszach: obrysy i funkcja z BDOT10k, wysokość z lotniczego skaningu laserowego, adres z punktów adresowych OSM.
 
 BDOT10k (warstwa OT_BUBD_A, obrysy z ewidencji gruntów i budynków) to główne źródło: każdy budynek
 ma tam funkcję (np. budynek wielorodzinny), liczbę kondygnacji i stan (eksploatowany, w budowie...).
 Wysokość to różnica dwóch rastrów GUGiK ze skaningu laserowego (LiDAR): NMPT (powierzchnia z dachami, piksel 0,5 m)
-i NMT (sam teren, 1 m). Z OSM dołączamy adres tam, gdzie obrys OSM pokrywa co najmniej połowę obrysu BDOT,
-a brakujący adres bierzemy z punktu adresowego OSM leżącego w obrysie.
+i NMT (sam teren, 1 m). Adres to punkty adresowe OSM (w Polsce głównie z importu PRG) leżące w obrysie budynku.
 """
 
 import json
@@ -21,7 +20,7 @@ import pyogrio
 import rasterio
 import rasterio.mask
 from pyproj import Transformer
-from shapely.geometry import Point, Polygon, box
+from shapely.geometry import Point, box
 
 from ortofoto import DATA
 from ortofoto.arkusze import zasieg
@@ -30,8 +29,7 @@ OVERPASS = ["https://overpass-api.de/api/interpreter", "https://overpass.private
 WCS = ("https://mapy.geoportal.gov.pl/wss/service/PZGIK/{0}/GRID1/WCS/{1}?SERVICE=WCS&VERSION=2.0.1&REQUEST=GetCoverage"
        "&COVERAGEID={2}_PL-EVRF2007-NH&FORMAT=image/x-aaigrid&SUBSET=x({3},{5})&SUBSET=y({4},{6})")
 MODELE = {"nmpt": ("NMPT", "DigitalSurfaceModel", "DSM"), "nmt": ("NMT", "DigitalTerrainModel", "DTM")}
-TAGI = ["building", "building:levels", "height", "addr:street", "addr:housenumber", "name"]
-KAFLE = DATA / "kafle"  # pobrane raz kafle OSM i LiDAR-u
+KAFLE = DATA / "kafle"  # pobrane raz kafle punktów adresowych i LiDAR-u
 KAFEL_OSM = 2000  # bok kafla [m] dla zapytań Overpass
 KAFEL_LIDAR = 1000  # bok kafla [m] dla rastrów wysokości (0,5 m, więc ok. 2000 × 2000 pikseli)
 MARGINES_LIDAR = 100  # rastry sięgają tyle poza kafel, żeby objąć budynki na jego granicy
@@ -59,50 +57,34 @@ def kafle(obszar, bok):
             if box(x, y, x + bok, y + bok).intersects(obszar)]
 
 
-def _overpass_kafel(rodzaj, x, y):
-    """Obrysy budynków ("budynki") albo punkty adresowe ("adresy") z jednego kafla KAFEL_OSM, pobrane raz i zapisane w data/kafle/."""
-    plik = KAFLE / f"osm_{rodzaj}_{x}_{y}.geojson"
+def _adresy_kafel(x, y):
+    """Punkty adresowe OSM z jednego kafla KAFEL_OSM, pobrane raz i zapisane w data/kafle/."""
+    plik = KAFLE / f"osm_adresy_{x}_{y}.geojson"
     if not plik.exists():
         lon0, lat0, lon1, lat1 = Transformer.from_crs(2177, 4326, always_xy=True).transform_bounds(x, y, x + KAFEL_OSM, y + KAFEL_OSM)
-        if rodzaj == "budynki":
-            elementy = _zapytaj(f'[out:json][timeout:180];way["building"]({lat0},{lon0},{lat1},{lon1});out tags geom;')
-            wiersze = [{"osm_id": e["id"], **{t: e["tags"].get(t) for t in TAGI},
-                        "geometry": Polygon([(q["lon"], q["lat"]) for q in e["geometry"]])} for e in elementy if len(e.get("geometry", [])) >= 4]
-        else:
-            elementy = _zapytaj(f'[out:json][timeout:180];node["addr:housenumber"]({lat0},{lon0},{lat1},{lon1});out;')
-            wiersze = [{"ulica": e["tags"].get("addr:street") or e["tags"].get("addr:place"), "numer": e["tags"]["addr:housenumber"],
-                        "geometry": Point(e["lon"], e["lat"])} for e in elementy]
+        elementy = _zapytaj(f'[out:json][timeout:180];node["addr:housenumber"]({lat0},{lon0},{lat1},{lon1});out;')
+        wiersze = [{"ulica": e["tags"].get("addr:street") or e["tags"].get("addr:place"), "numer": e["tags"]["addr:housenumber"],
+                    "geometry": Point(e["lon"], e["lat"])} for e in elementy]
         KAFLE.mkdir(exist_ok=True)
         gpd.GeoDataFrame(wiersze, geometry="geometry", crs=4326).to_file(plik, driver="GeoJSON")
     return gpd.read_file(plik).to_crs(2177)
 
 
-def wczytaj_osm(obszar=None):
-    """Obrysy budynków z OSM (Overpass, kafle zapisane w data/kafle/), indeks osm_id."""
-    obszar = obszar if obszar is not None else zasieg()
-    osm = pd.concat([_overpass_kafel("budynki", x, y) for x, y in kafle(obszar, KAFEL_OSM)])
-    osm = osm.drop_duplicates("osm_id").set_index("osm_id")
-    osm["kondygnacje_osm"] = pd.to_numeric(osm["building:levels"], errors="coerce")
-    osm["h_osm"] = pd.to_numeric(osm["height"].astype(str).str.replace(",", "."), errors="coerce")
-    return osm[osm.centroid.within(obszar)]
-
-
 def wczytaj_adresy(obszar=None):
     """Punkty adresowe z OSM (węzły z numerem domu, w Polsce głównie z importu PRG): kolumny ulica, numer; EPSG:2177."""
     obszar = obszar if obszar is not None else zasieg()
-    adresy = pd.concat([_overpass_kafel("adresy", x, y) for x, y in kafle(obszar, KAFEL_OSM)]).drop_duplicates()
+    adresy = pd.concat([_adresy_kafel(x, y) for x, y in kafle(obszar, KAFEL_OSM)]).drop_duplicates()
     return adresy[adresy.ulica.notna()]
 
 
 def _dolacz_adresy(bud, adresy):
-    """Uzupełnia brakujący adres OSM punktem adresowym leżącym w obrysie; kolumna adresy ma wszystkie adresy budynku."""
+    """Adresy z punktów adresowych w obrysie: kolumna adresy ma wszystkie, addr:street i addr:housenumber pierwszy z nich."""
     pkt = gpd.sjoin(adresy, bud[["geometry"]].rename_axis("budynek").reset_index(), predicate="within")
     pkt = pkt.drop_duplicates(["budynek", "ulica", "numer"]).sort_values(["ulica", "numer"])
     bud["adresy"] = pkt.groupby("budynek").apply(lambda p: ", ".join(p.ulica + " " + p.numer))
     pierwszy = pkt.groupby("budynek").first()
-    brak = bud["addr:street"].isna()
-    bud.loc[brak, "addr:street"] = pierwszy.ulica.reindex(bud.index[brak])
-    bud.loc[brak, "addr:housenumber"] = pierwszy.numer.reindex(bud.index[brak])
+    bud["addr:street"] = pierwszy.ulica.reindex(bud.index)
+    bud["addr:housenumber"] = pierwszy.numer.reindex(bud.index)
     return bud
 
 
@@ -183,58 +165,19 @@ def wczytaj_bdot(obszar=None):
     return bdot[bdot.centroid.within(obszar)]
 
 
-def _dopasuj_osm(bdot, osm, prog=0.5):
-    """Dla każdego budynku BDOT obrys OSM, który pokrywa największą część jego obrysu (co najmniej prog).
-
-    Kryterium to udział obrysu BDOT leżący w obrysie OSM, a nie IoU: ewidencja dzieli bloki na segmenty,
-    a OSM często ma jeden obrys całego bloku; każdy segment dziedziczy wtedy wysokość i adres bloku.
-    """
-    pary = gpd.sjoin(bdot[["geometry"]].reset_index(), osm[["geometry"]].reset_index(), predicate="intersects")
-    a = bdot.geometry.loc[pary["id"]].values
-    b = osm.geometry.loc[pary["osm_id"]].values
-    pary["pokrycie"] = a.intersection(b).area / a.area
-    najlepsze = pary[pary.pokrycie >= prog].sort_values("pokrycie").drop_duplicates("id", keep="last")
-    return najlepsze.set_index("id").osm_id
-
-
 def wczytaj_budynki(obszar=None):
-    """Budynki na arkuszach: BDOT10k z dołączonymi danymi OSM.
+    """Budynki na arkuszach: BDOT10k z adresami z punktów adresowych.
 
     Kolumna h to wysokość [m] z LiDAR-u. Budynek, którego skaning jeszcze nie widział (poniżej 2 m), dostaje
     3,3 · kondygnacje + 2 m, a bez kondygnacji 8 m. Kolumna zrodlo_h mówi, skąd jest wysokość.
     mieszkalny_bdot to funkcja ogólna 'budynki mieszkalne'.
     """
     obszar = obszar if obszar is not None else zasieg()
-    bud = wczytaj_bdot(obszar)
-    osm = wczytaj_osm(obszar)
-    bud["osm_id"] = _dopasuj_osm(bud, osm).astype("Int64")
-    kolumny_osm = ["building", "addr:street", "addr:housenumber", "kondygnacje_osm", "h_osm"]
-    bud = _dolacz_adresy(bud.join(osm[kolumny_osm], on="osm_id"), wczytaj_adresy(obszar))
+    bud = _dolacz_adresy(wczytaj_bdot(obszar), wczytaj_adresy(obszar))
     bud["mieszkalny_bdot"] = bud.funkcja_ogolna == "budynki mieszkalne"
-    kond = bud.kondygnacje.fillna(bud.kondygnacje_osm)
+    kond = bud.kondygnacje
     lidar = wysokosc_lidar(bud).reindex(bud.index)
     lidar = lidar.where(lidar >= 2)
     bud["h"] = lidar.fillna(3.3 * kond + 2).fillna(8.0)
     bud["zrodlo_h"] = np.select([lidar.notna(), kond.notna()], ["LiDAR", "z kondygnacji"], "domyślna")
     return bud
-
-
-def wybierz(bud, id=None, osm_id=None, adres=None):
-    """Budynek po id z BDOT, po identyfikatorze OSM albo po adresie 'Ulica numer' (wystarczy końcówka ulicy)."""
-    if id is not None:
-        return bud.loc[id]
-    if osm_id is not None:
-        trafienia = bud[bud.osm_id == osm_id]
-    else:
-        ulica, numer = adres.rsplit(" ", 1)
-        trafienia = bud[bud["addr:street"].str.endswith(ulica, na=False) & (bud["addr:housenumber"] == numer)]
-    if trafienia.empty:
-        raise KeyError(osm_id if osm_id is not None else adres)
-    return trafienia.iloc[0]
-
-
-def opis(b):
-    """Jednolinijkowy opis budynku do tytułów wykresów."""
-    adres = f"{b['addr:street']} {b['addr:housenumber']}" if isinstance(b["addr:street"], str) else "bez adresu"
-    kond = "?" if pd.isna(b.kondygnacje) else f"{b.kondygnacje:.0f}"
-    return f"{b.funkcja} · {adres} · kondygnacje: {kond} · h = {b.h:.1f} m ({b.zrodlo_h})"

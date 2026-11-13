@@ -1,0 +1,4 @@
+# Baseline bez modelu na tych samych arkuszach: objętość budynków mieszkalnych i eksploatowanych według BDOT10k.
+opis = "3 arkusze: objętość × (mieszkalny i eksploatowany według BDOT10k)"
+estymator = "objetosc_bdot"
+arkusze = ["6.148.12.04.2", "6.148.12.04.4", "6.148.12.05.1"]

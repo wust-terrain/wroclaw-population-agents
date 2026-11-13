@@ -1,47 +1,49 @@
 """Uruchamianie przebiegów z plików TOML.
 
-    python -m agenci.eksperyment eksperymenty/arkusz_haiku.toml             # prawdziwy przebieg
-    python -m agenci.eksperyment eksperymenty/arkusz_haiku.toml --na-sucho  # bez API i bez zapisu: test i wycena
+    python -m agenci.eksperyment eksperymenty/arkusze_haiku.toml            # prawdziwy przebieg
+    python -m agenci.eksperyment eksperymenty/arkusze_haiku.toml --na-sucho # bez API i bez zapisu: test i wycena
 
 Wynik trafia do wyniki/eksperymenty/<nazwa pliku TOML>.csv, jeden wiersz na budynek; pętla dokłada <nazwa>__dialog.csv
-i <nazwa>__bilans.csv. Konfiguracje z tym samym [budynki] dostają te same budynki, więc wyniki da się porównywać parami.
+i <nazwa>__bilans.csv. Konfiguracje z tymi samymi `arkusze` dostają te same budynki, więc wyniki da się porównywać parami.
+
+Świadek dopisuje każdy gotowy budynek do <nazwa>.czesc.csv. Przerwany przebieg uruchomiony jeszcze raz pomija budynki z tego
+pliku, więc nie buduje dla nich kart od nowa. Plik znika po zapisaniu wyniku; po zmianie promptu w trakcie przebiegu usuń go ręcznie.
 """
 
 import argparse
 import time
 import tomllib
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 import pandas as pd
+from shapely.geometry import box
+from shapely.ops import unary_union
 
 from agenci import PRZEBIEGI
-from agenci.estymatory import objetosc, objetosc_bdot, ze_wzoru
+from agenci.estymatory import objetosc_bdot, z_rekordu, ze_wzoru
 from agenci.karta import zbuduj_karte
 from agenci.llm import ROWNOLEGLE, Klient
 from agenci.petla import uzgodnij
-from agenci.srlm import obszar_pracy, wczytaj_srlm
-from agenci.statystyka import budynki_w_kwadratach, kompletne_kwadraty, udzialy
-from agenci.swiadkowie import swiadek_wizualny
+from agenci.swiadkowie import SCHEMAT_OBSERWACJI, swiadek_wizualny
 from agenci.szperacz import poszukaj
-from ortofoto.arkusze import KOLEJNOSC, zasieg
+from ortofoto.arkusze import ARKUSZE
 from ortofoto.budynki import wczytaj_budynki
-from ortofoto.wycinki import dostepne_kierunki
 
-BASELINE = {"objetosc": objetosc, "objetosc_bdot": objetosc_bdot}
+BASELINE = {"objetosc_bdot": objetosc_bdot}
+KOLUMNY_SWIADKA = ["budynek", "liczba_widokow", *SCHEMAT_OBSERWACJI["required"], "mieszkancy", "zapasowy", "koszt_usd", "stop", "blad"]
 
 
 @dataclass
 class Konfiguracja:
     nazwa: str  # nazwa pliku TOML
     opis: str = ""
-    estymator: str = "wzor"  # objetosc | objetosc_bdot | wzor (świadek + rubryka) | petla (wzór + uzgadnianie)
+    estymator: str = "wzor"  # objetosc_bdot (baseline) | wzor (świadek + rubryka) | petla (wzór + uzgadnianie)
     szukaj: bool = False  # czy szperacz szuka w sieci liczby miejsc albo mieszkań dla największych budynków
-    z_rekordem: bool = True  # czy świadek i agent widzą rekord BDOT10k; bez niego kontrola z BDOT10k nie jest kolista
-    model: str = "claude-opus-5-5"
+    model: str = "claude-haiku-5-5"
     model_szperacza: str | None = None  # szperacz potrzebuje wyszukiwarki z API Claude; None = ten sam model co reszta
-    budynki: dict = field(default_factory=dict)  # wszystkie = true, rejon = numer SRLM, kwadraty = n albo liczba = n (domyślnie 40); ziarno
+    arkusze: list[str] | None = None  # godła arkuszy; None = wszystkie arkusze z data/
 
     def __post_init__(self):
         if self.estymator not in (*BASELINE, "wzor", "petla"):
@@ -54,59 +56,58 @@ def wczytaj_konfiguracje(sciezka):
 
 
 def obszar_konfiguracji(konf):
-    """Wielokąt, na którym działa przebieg: przy `rejon` kwadraty NSP przecinające rejon SRLM, inaczej None (wszystkie arkusze)."""
-    numer = konf.budynki.get("rejon")
-    return None if numer is None else obszar_pracy(wczytaj_srlm([numer]).geometry.iloc[0])
+    """Wielokąt, na którym działa przebieg: zasięg arkuszy o godłach `arkusze` albo None (wszystkie arkusze z data/)."""
+    if konf.arkusze is None:
+        return None
+    return unary_union([box(*a.bounds) for zrodla in ARKUSZE.values() for a in zrodla if a.godlo in konf.arkusze])
 
 
-def wybierz_budynki(bud, konf):
-    """Lista id budynków: wszystkie z obszaru rejonu SRLM, cały arkusz, losowe kompletne kwadraty NSP albo losowa próbka widocznych ze wszystkich kierunków.
+def _swiadek_i_wzor(klient, bud, ids, czesc=None):
+    """Jeden wiersz predykcji na budynek: obserwacje świadka i liczba mieszkańców ze wzoru.
 
-    Tylko cały arkusz i kwadraty pozwalają porównać sumę predykcji z ludnością kwadratu. Cały arkusz obejmuje też budynki
-    przy krawędzi bez pełnego widoku, które dostają szacunek z samego rekordu.
+    Gdy świadek nie da odpowiedzi albo budynek się wywróci (kolumna blad), wynik to rubryka z samego rekordu (zapasowy = True).
+    czesc to plik CSV z gotowymi wierszami: budynki z niego (bez błędu) pomijamy, a nowe wiersze dopisujemy na bieżąco.
     """
-    b, ziarno = konf.budynki, konf.budynki.get("ziarno", 0)
-    if b.get("wszystkie") or b.get("rejon") is not None:  # przy rejonie bud jest już ograniczone do obszaru rejonu
-        return sorted(bud.index)
-    if b.get("kwadraty"):
-        miasto = budynki_w_kwadratach(zasieg())[0]
-        widoczne = [i for i, w in bud.iterrows() if dostepne_kierunki(w)]
-        kody = pd.Series(kompletne_kwadraty(miasto, widoczne)).sample(b["kwadraty"], random_state=ziarno)
-        u = udzialy(miasto, widoczne)
-        return sorted(set(u.index.get_level_values("id")[u.index.get_level_values("kod").isin(kody)]))
-    pelne = bud[[len(dostepne_kierunki(w)) == len(KOLEJNOSC) for _, w in bud.iterrows()]]
-    return sorted(pelne.sample(b.get("liczba", 40), random_state=ziarno).index)
+    gotowe = pd.DataFrame(columns=KOLUMNY_SWIADKA)
+    if czesc is not None and czesc.exists():
+        gotowe = pd.read_csv(czesc, dtype={"budynek": str})
+        gotowe = gotowe[gotowe.blad.isna() & gotowe.budynek.isin(ids)]
+        print(f"świadek: {len(gotowe)} budynków z {czesc.name}", flush=True)
+        gotowe.to_csv(czesc, index=False)  # bez wierszy z błędem, które teraz spróbujemy jeszcze raz
+    zostale = [i for i in ids if i not in set(gotowe.budynek)]
 
-
-def _swiadek_i_wzor(klient, bud, ids, z_rekordem):
-    """Jeden wiersz predykcji na budynek: obserwacje świadka i liczba mieszkańców ze wzoru."""
     def jeden(budynek):
-        wiersz = {"budynek": budynek, "blad": None}
+        wiersz = {"budynek": budynek, "zapasowy": False}
         try:
             karta = zbuduj_karte(bud.loc[budynek])
             wiersz["liczba_widokow"] = len(karta.widoki)
-            obs, odp = swiadek_wizualny(klient, karta, z_rekordem)
+            obs, odp = swiadek_wizualny(klient, karta)
             wiersz |= {"koszt_usd": odp.koszt_usd, "stop": odp.stop}
-            if obs is not None:
-                wiersz |= obs | {"mieszkancy": ze_wzoru(obs, karta, z_rekordem)}
+            if obs is None:
+                raise RuntimeError(f"świadek bez odpowiedzi po kolejnych próbach ({odp.stop})")
+            wiersz |= obs | {"mieszkancy": ze_wzoru(obs, karta)}
         except Exception as e:  # jeden zepsuty budynek nie zatrzymuje przebiegu
-            wiersz["blad"] = f"{type(e).__name__}: {e}"[:300]
+            wiersz |= {"blad": f"{type(e).__name__}: {e}"[:300], "zapasowy": True,
+                       "mieszkancy": z_rekordu(zbuduj_karte(bud.loc[budynek], obrazy=False))}
         return wiersz
 
     wiersze, start = [], time.perf_counter()
     with ThreadPoolExecutor(ROWNOLEGLE) as ex:
-        for n, w in enumerate(ex.map(jeden, ids), 1):
+        for n, w in enumerate(ex.map(jeden, zostale), 1):
             wiersze.append(w)
-            if n % 500 == 0 or n == len(ids):  # długi przebieg: postęp co 500 budynków
-                print(f"świadek: {n}/{len(ids)} budynków, {(time.perf_counter() - start) / 60:.0f} min", flush=True)
-    return pd.DataFrame(wiersze)
+            if czesc is not None:
+                pd.DataFrame([w]).reindex(columns=KOLUMNY_SWIADKA).to_csv(czesc, mode="a", header=not czesc.exists(), index=False)
+            if n % 500 == 0 or n == len(zostale):  # długi przebieg: postęp co 500 budynków
+                print(f"świadek: {n}/{len(zostale)} budynków, {(time.perf_counter() - start) / 60:.0f} min", flush=True)
+    nowe = pd.DataFrame(wiersze).reindex(columns=KOLUMNY_SWIADKA)
+    return pd.concat([gotowe, nowe], ignore_index=True) if len(gotowe) else nowe
 
 
 def uruchom(konf, na_sucho=False):
     """Przebieg eksperymentu; zapisuje wyniki (chyba że na sucho) i zwraca DataFrame predykcji."""
     obszar = obszar_konfiguracji(konf)
-    bud = wczytaj_budynki(obszar)
-    ids = wybierz_budynki(bud, konf)
+    bud = wczytaj_budynki(obszar)  # budynki, których środek leży na obszarze; przy krawędzi bez pełnego widoku dostają mniej zdjęć
+    ids = sorted(bud.index)
     tabele = {}
     koszt = 0.0
     if konf.estymator in BASELINE:
@@ -114,11 +115,14 @@ def uruchom(konf, na_sucho=False):
         pred = pd.DataFrame({"budynek": ids, "objetosc_m3": [policz(zbuduj_karte(bud.loc[i], obrazy=False)) for i in ids], "blad": None})
     else:
         klient = Klient(konf.model, konf.nazwa, na_sucho)
-        pred = _swiadek_i_wzor(klient, bud, ids, konf.z_rekordem)
-        if konf.estymator == "petla" and "typ" in pred:  # brak kolumny: wszystkie wywołania padły, błędy są w kolumnie blad
-            pred, tabele["dialog"], tabele["bilans"] = uzgodnij(klient, pred, bud, konf.z_rekordem, obszar)
+        czesc = None if na_sucho else PRZEBIEGI / f"{konf.nazwa}.czesc.csv"
+        if czesc is not None:
+            PRZEBIEGI.mkdir(parents=True, exist_ok=True)
+        pred = _swiadek_i_wzor(klient, bud, ids, czesc)
+        if konf.estymator == "petla" and pred.typ.notna().any():
+            pred, tabele["dialog"], tabele["bilans"] = uzgodnij(klient, pred, bud, obszar)
         szperacz = Klient(konf.model_szperacza, konf.nazwa, na_sucho) if konf.model_szperacza else klient
-        if konf.szukaj and "typ" in pred:
+        if konf.szukaj and pred.typ.notna().any():
             pred = poszukaj(szperacz, pred, bud)
         koszt = klient.koszt + (szperacz.koszt if szperacz is not klient else 0.0)
 
@@ -127,9 +131,10 @@ def uruchom(konf, na_sucho=False):
         pred.to_csv(PRZEBIEGI / f"{konf.nazwa}.csv", index=False)
         for nazwa, tabela in tabele.items():
             tabela.to_csv(PRZEBIEGI / f"{konf.nazwa}__{nazwa}.csv", index=False)
+        (PRZEBIEGI / f"{konf.nazwa}.czesc.csv").unlink(missing_ok=True)
 
     bledy = pred[pred.blad.notna()]
-    print(f"{konf.nazwa}: {len(pred)} budynków, błędów {len(bledy)}, koszt {koszt:.3f} USD{' (szacunek na sucho)' if na_sucho else ''}")
+    print(f"{konf.nazwa}: {len(pred)} budynków, błędów {len(bledy)} (wynik z rekordu), koszt {koszt:.3f} USD{' (szacunek na sucho)' if na_sucho else ''}")
     if len(bledy):
         print(bledy[["budynek", "blad"]].head().to_string(index=False))
     return pred

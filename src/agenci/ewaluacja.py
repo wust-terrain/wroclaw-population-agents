@@ -1,15 +1,15 @@
-"""Ewaluacja przebiegów: zgodność z BDOT10k, sumy w kwadratach NSP 2021 i, na końcu, sumy w rejonach SRLM.
+"""Ocena przebiegów na SRLM, czyli szacowanej rzeczywistej liczbie mieszkańców w 375 rejonach komunikacyjnych Wrocławia.
 
-    python -m agenci.ewaluacja                # tabela wszystkich przebiegów, które mają wyniki (kwadraty NSP)
-    python -m agenci.ewaluacja --srlm         # te same przebiegi na rejonach SRLM pokrytych arkuszami
-    python -m agenci.ewaluacja --srlm 30 367  # tylko wybrane rejony, z tabelą rejonów
+    python -m agenci.ewaluacja            # każdy przebieg z wynikami na rejonach pokrytych predykcjami, rejony z największym rozjazdem
+    python -m agenci.ewaluacja 30 367     # tylko wybrane rejony, z tabelą rejonów
 
-Dla pojedynczego budynku nie mamy żadnej referencji, więc liczbę mieszkańców oceniamy tylko na kwadratach NSP 2021, w których
-predykcję ma każdy budynek mieszkalny. Kwadraty są jednostką losowania: przedziały to bootstrap kwadratów, przy kilkunastu
-kwadratach przybliżony i raczej za wąski, więc czytamy je jako dolne oszacowanie niepewności, a nie jako test.
-
-BDOT10k kontroluje świadka, a nie liczbę mieszkańców: kondygnacje oraz to, czy budynek jest mieszkalny i eksploatowany.
-Jest to koliste dla przebiegów, które widzą rekord BDOT w prompcie; uczciwy test to przebieg z z_rekordem = false.
+Dla pojedynczego budynku nie mamy prawdziwej liczby mieszkańców, więc sumujemy predykcje w rejonach SRLM (budynek przy granicy
+dzieli się według obrysu) i porównujemy z SRLM. SRLM nie widzi żaden agent ani prompt; oceniamy raz, na końcu.
+- poziom: suma predykcji / suma SRLM, czyli czy szacujemy tyle ludzi, ile jest naprawdę,
+- spearman: czy kolejność rejonów od najmniej do najbardziej zaludnionego się zgadza (1 to ta sama kolejność),
+- wape: jaką część ludzi trzeba by przesunąć między rejonami, gdy suma predykcji równa się sumie SRLM (0 to ten sam rozkład),
+- stosunek w tabeli rejonów: suma / SRLM w jednym rejonie; największe i najmniejsze pokazują, gdzie się rozjeżdżamy.
+Punktem odniesienia jest sam NSP 2021 rozłożony na rejony (wiersz nsp_2021).
 """
 
 import argparse
@@ -18,14 +18,14 @@ import numpy as np
 import pandas as pd
 
 from agenci import EKSPERYMENTY, PRZEBIEGI
-from agenci.eksperyment import BASELINE, obszar_konfiguracji, wczytaj_konfiguracje
+from agenci.eksperyment import obszar_konfiguracji, wczytaj_konfiguracje
 from agenci.srlm import pokrycie, suma_w_rejonach, wczytaj_srlm
 from agenci.statystyka import budynki_w_kwadratach, kompletne_kwadraty, sumy, udzialy, wczytaj_nsp
 from ortofoto.arkusze import zasieg
 from ortofoto.budynki import wczytaj_budynki
 
-BOOTSTRAP = 2000  # liczba losowań do przedziałów
 POKRYCIE = 0.95  # rejon SRLM oceniamy, gdy co najmniej tyle jego powierzchni mieszkalnej ma predykcję
+NAJWIEKSZE = 10  # tyle rejonów z największym i najmniejszym stosunkiem pokazujemy
 
 
 def wczytaj(nazwa):
@@ -34,23 +34,8 @@ def wczytaj(nazwa):
 
 
 def kolumna(pred):
-    """Kolumna z predykcją: mieszkancy albo, w baseline'ach, objetosc_m3. Ewaluacja i tak skaluje sumę do spisu, więc obie się nadają."""
+    """Kolumna z predykcją: mieszkancy albo, w baseline'ach, objetosc_m3."""
     return "mieszkancy" if "mieszkancy" in pred else "objetosc_m3"
-
-
-def zgodnosc_z_bdot(pred, bud):
-    """Kondygnacje świadka a BDOT10k oraz 'mieszkańcy > 0' a 'mieszkalny i eksploatowany' w BDOT10k."""
-    ref = pd.DataFrame({"kond_bdot": bud.kondygnacje, "mieszkalny": bud.mieszkalny_bdot & (bud.kategoria == "eksploatowany")})
-    p = pred.join(ref, on="budynek")
-    wynik = {}
-    if "kondygnacje" in p:
-        k = p.dropna(subset=["kondygnacje", "kond_bdot"])
-        wynik |= {"kond_mae": (k.kondygnacje - k.kond_bdot).abs().mean(), "kond_trafne": (k.kondygnacje == k.kond_bdot).mean()}
-    znane = p.dropna(subset=[kolumna(p)])
-    prawda, przewidziane = znane.mieszkalny.astype(bool), znane[kolumna(p)] > 0
-    tp = (prawda & przewidziane).sum()
-    return wynik | {"mieszk_trafnosc": (prawda == przewidziane).mean(),
-                    "mieszk_f1": 2 * tp / (prawda.sum() + przewidziane.sum()) if tp else 0.0}
 
 
 def _spearman(a, b):
@@ -63,57 +48,14 @@ def _wape(suma, ref):
     return np.nan if suma.sum() == 0 else float(np.abs(suma * ref.sum() / suma.sum() - ref).sum() / ref.sum())
 
 
-MIARY = {"spearman": _spearman, "wape": _wape}
-
-
-def przedzial(statystyka, n):
-    """Percentylowy przedział 95% statystyki policzonej na indeksach kwadratów losowanych ze zwracaniem."""
-    rng = np.random.default_rng(0)
-    return tuple(np.nanquantile([statystyka(rng.integers(0, n, n)) for _ in range(BOOTSTRAP)], [0.025, 0.975]))
-
-
-def sumy_kwadratow(pred, bud, kw, kol=None):
-    """Suma predykcji i ludność NSP w kwadratach, w których predykcję ma każdy budynek mieszkalny.
-
-    bud i kw jak z budynki_w_kwadratach; budynki niemieszkalne w BDOT10k też się liczą, jeśli świadek dał im mieszkańców.
-    """
-    kol = kol or kolumna(pred)
-    s = pred.dropna(subset=[kol]).set_index("budynek")[kol]
-    kody = kompletne_kwadraty(bud, s.index)
-    suma = sumy(s, udzialy(bud, s.index)).reindex(kody).fillna(0.0)
-    return suma, kw.ludnosc.reindex(kody).astype(float)
-
-
-def ocena_kwadratow(pred, bud, kw, kol=None):
-    """Spearman i WAPE sum w kwadratach, z przedziałami; z mniej niż trzech kwadratów rangi nic nie mówią."""
-    suma, ref = sumy_kwadratow(pred, bud, kw, kol)
-    a, b = suma.to_numpy(float), ref.to_numpy(float)
-    wynik = {"n_kwadratow": len(a)}
-    if len(a) >= 3:
-        for nazwa, f in MIARY.items():
-            lo, hi = przedzial(lambda i, f=f: f(a[i], b[i]), len(a))
-            wynik |= {f"kw_{nazwa}": f(a, b), f"kw_{nazwa}_lo": lo, f"kw_{nazwa}_hi": hi}
-    return wynik
-
-
-def porownaj_sumy(a, b, ref):
-    """Różnica a - b w Spearmanie i WAPE na wspólnych kwadratach, z przedziałami z bootstrapu par kwadratów."""
-    wspolne = a.index.intersection(b.index).intersection(ref.index)
-    x, y, r = a[wspolne].to_numpy(float), b[wspolne].to_numpy(float), ref[wspolne].to_numpy(float)
-    wynik = {"n": len(wspolne)}
-    for nazwa, f in MIARY.items():
-        lo, hi = przedzial(lambda i, f=f: f(x[i], r[i]) - f(y[i], r[i]), len(x))
-        wynik |= {f"d_{nazwa}": f(x, r) - f(y, r), f"d_{nazwa}_lo": lo, f"d_{nazwa}_hi": hi}
-    return wynik
-
-
 def osoby(pred, bud, kw, kol):
     """Predykcja w osobach, seria o indeksie id budynku. Baseline (objetosc_m3) dostaje ludność NSP rozłożoną wg objętości:
-    objętość razy (ludność / objętość) z kompletnych kwadratów spisu, czyli klasyczny rozkład dazymetryczny; SRLM go nie widzi."""
+    objętość razy (ludność / objętość) z kwadratów spisu, w których objętość ma każdy budynek mieszkalny, czyli klasyczny
+    rozkład dazymetryczny; SRLM go nie widzi."""
     s = pred.dropna(subset=[kol]).set_index("budynek")[kol]
     if kol == "objetosc_m3":
-        suma, ref = sumy_kwadratow(pred, bud, kw, kol)
-        s = s * ref.sum() / suma.sum()
+        kody = kompletne_kwadraty(bud, s.index)
+        s = s * kw.ludnosc.reindex(kody).sum() / sumy(s, udzialy(bud, s.index)).reindex(kody).sum()
     return s
 
 
@@ -170,31 +112,19 @@ def podsumowanie_srlm(numery=None, prog=POKRYCIE):
     return pd.DataFrame(miary).set_index(["przebieg", "kolumna"]), pd.concat(tabele).set_index(["przebieg", "kolumna"], append=True)
 
 
-def podsumowanie():
-    """Tabela przebiegów z eksperymenty/*.toml, które mają wyniki. Pętlę oceniamy na kwadratach sprzed uzgadniania: po nim byłoby to koło."""
-    bud = wczytaj_budynki()
-    miasto, kw = budynki_w_kwadratach(zasieg())
-    wiersze = []
-    for plik in sorted(EKSPERYMENTY.glob("*.toml")):
-        if (PRZEBIEGI / f"{plik.stem}.csv").exists():
-            p = wczytaj(plik.stem)
-            ok = p[p[kolumna(p)].notna()]
-            kol = "mieszkancy_r0" if "mieszkancy_r0" in p else kolumna(p)
-            wiersze.append({"przebieg": plik.stem, "budynki": len(p), "bledy": int(p.blad.notna().sum()), "usd": p.get("koszt_usd", pd.Series([0.0])).sum(),
-                            "suma_mieszkancow": ok.mieszkancy.sum() if "mieszkancy" in ok else np.nan,
-                            **zgodnosc_z_bdot(ok, bud), **ocena_kwadratow(ok, miasto, kw, kol)})
-    return pd.DataFrame(wiersze).set_index("przebieg")
+def rozjazdy(rejony, n=NAJWIEKSZE):
+    """Rejony z największym i najmniejszym stosunkiem predykcji do SRLM (dla każdego przebiegu i kolumny osobno)."""
+    r = rejony.drop(columns="geometry", errors="ignore").sort_values("stosunek")
+    return r.groupby(level=["przebieg", "kolumna"], group_keys=False).apply(
+        lambda t: t[::-1] if len(t) <= 2 * n else pd.concat([t.tail(n)[::-1], t.head(n)]))
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Porównanie przebiegów.")
-    parser.add_argument("--srlm", type=int, nargs="*", help="ocena na rejonach SRLM (bez numerów: wszystkie pokryte arkuszami)")
+    parser = argparse.ArgumentParser(description="Ocena przebiegów na rejonach SRLM.")
+    parser.add_argument("rejony", type=int, nargs="*", help="numery rejonów SRLM (bez numerów: wszystkie pokryte predykcjami)")
     args = parser.parse_args()
-    with pd.option_context("display.width", 200, "display.max_columns", None):
-        if args.srlm is None:
-            print(podsumowanie().round(3).to_string())
-        else:
-            miary, rejony = podsumowanie_srlm(args.srlm or None)
-            print(miary.round(3).to_string())
-            if args.srlm:
-                print(rejony.drop(columns="geometry", errors="ignore").round(2).to_string())
+    with pd.option_context("display.width", 200, "display.max_columns", None, "display.max_rows", None):
+        miary, rejony = podsumowanie_srlm(args.rejony or None)
+        print(miary.round(3).to_string())
+        if len(rejony):
+            print((rejony.drop(columns="geometry", errors="ignore") if args.rejony else rozjazdy(rejony)).round(2).to_string())

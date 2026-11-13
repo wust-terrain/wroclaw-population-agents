@@ -2,14 +2,15 @@
 
 Moduły (w kolejności przepływu danych):
     karta        - karta budynku: rekord z BDOT10k, wysokość i wycinki ortofotomapy (bez modelu)
-    llm          - wywołania Claude z pamięcią odpowiedzi w SQLite
-    swiadkowie   - świadek wizualny (VLM): typ budynku, kondygnacje, udział mieszkalny, stan
+    llm          - wywołania modelu (Claude albo vLLM) z pamięcią odpowiedzi w SQLite
+    swiadkowie   - świadek wizualny (VLM): typ budynku, stan, udział mieszkalny i gęstość
     estymatory   - liczba mieszkańców: baseline'y, rubryka (stałe z literatury) i wzór
     statystyka   - NSP 2021 w kwadratach 125 m i przypisanie budynków do kwadratów
+    srlm         - rejony SRLM i udziały budynków w rejonach
     petla        - pętla uzgadniania: agent bilansujący dopytuje świadka o rozjazdy ze spisem
     szperacz     - agent z wyszukiwarką: liczba miejsc albo mieszkań dla największych budynków
     eksperyment  - konfiguracja przebiegu (TOML) i uruchomienie na zbiorze budynków
-    ewaluacja    - zgodność z BDOT10k i sumy w kwadratach NSP 2021
+    ewaluacja    - ocena na rejonach SRLM
 """
 
 from ortofoto import KORZEN, WYNIKI

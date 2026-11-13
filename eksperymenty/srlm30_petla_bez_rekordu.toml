@@ -1,8 +1,0 @@
-# Ocena na SRLM, rejon 30: jak srlm30_petla, ale modele nie widzą rekordu BDOT10k (uczciwa ocena typu i kondygnacji).
-opis = "SRLM rejon 30, tylko obrazy, pętla, Haiku 5.5"
-estymator = "petla"
-z_rekordem = false
-model = "claude-haiku-5-5"
-
-[budynki]
-rejon = 30

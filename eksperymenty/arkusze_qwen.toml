@@ -1,0 +1,7 @@
+# To samo co arkusze_haiku.toml na Qwen3.8-27B przez vLLM, do porównania z Haiku przed całym miastem; szperacz zostaje na Haiku.
+opis = "3 arkusze: świadek, rubryka z literatury, pętla i szperacz; Qwen3.8-27B, szperacz Haiku 5.5"
+estymator = "petla"
+szukaj = true
+model = "Qwen/Qwen3.8-27B"
+model_szperacza = "claude-haiku-5-5"
+arkusze = ["6.148.12.04.2", "6.148.12.04.4", "6.148.12.05.1"]

@@ -7,19 +7,15 @@ lokale z meldunkami w PESEL), połowę pustych lokali po 3 osoby i 95% miejsc w 
 budynków z BDOT10k bierze tylko w kilku rejonach bez meldunków. Służy wyłącznie do oceny na końcu: nie widzi go ani
 pętla (ta używa NSP 2021), ani żaden prompt.
 
-    obszar = obszar_pracy(rejony.loc[30].geometry)   # kwadraty NSP przecinające rejon: tu działa system
     u = udzialy_w_rejonach(bud, rejony)              # budynek przy granicy dzieli się między rejony
 """
 
 import geopandas as gpd
-import pandas as pd
 
-from agenci.statystyka import wczytaj_nsp
 from ortofoto import DATA
 from ortofoto.budynki import wczytaj_bdot
 
 PLIK = DATA / "SRLM" / "SRLM_Wroclaw_20221231.shp"
-PLAC_GRUNWALDZKI = 30
 
 
 def wczytaj_srlm(numery=None):
@@ -27,16 +23,6 @@ def wczytaj_srlm(numery=None):
     r = gpd.read_file(PLIK).set_index("NR_REJ")
     r = gpd.GeoDataFrame({"nazwa": r.NAZWA_REJ, "ludnosc": r.LUD_SZAC.astype(float)}, geometry=r.geometry, crs=r.crs)
     return r if numery is None else r.loc[list(numery)]
-
-
-def obszar_pracy(rejon):
-    """Suma kwadratów NSP 125 m, które mają część wspólną z rejonem (wielokąt, EPSG:2177).
-
-    Cały kwadrat, a nie sam rejon, bo pętla porównuje sumy ze spisem tylko w kwadratach, w których predykcję ma każdy
-    budynek mieszkalny; przy samym rejonie kwadraty przy jego granicy byłyby ucięte i pętla nic by nie uzgadniała.
-    """
-    nsp = wczytaj_nsp(rejon)
-    return nsp[nsp.intersection(rejon).area > 1.0].union_all()
 
 
 def udzialy_w_rejonach(bud, rejony):

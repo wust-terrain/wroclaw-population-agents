@@ -1,76 +1,85 @@
 # wroclaw-population-agents
 
-Szacujemy, ile osób mieszka w każdym budynku we Wrocławiu. Zakładamy, że model ruchu będzie dokładniejszy z takim wyliczeniem, a spis GUS podaje ludność tylko w kwadratach 125 × 125 m.
+Szacujemy, ile osób naprawdę mieszka w każdym budynku we Wrocławiu. Liczby trafią do modelu ruchu, a spis GUS podaje ludność tylko w kwadratach 125 × 125 m i tylko osoby zameldowane.
 
-Model widzący obrazy (VLM), czyli świadek, opisuje budynek ze zdjęć lotniczych z 4 stron świata, a liczbę mieszkańców liczy z tego wzór ze stałymi z literatury. Drugi model, agent bilansujący, dostaje rozjazdy ze spisem i dopytuje świadka.
+Model widzący obrazy (VLM), czyli świadek, ogląda budynek na zdjęciach lotniczych z 4 stron świata i czyta jego rekord z BDOT10k. Liczbę mieszkańców liczy wzór ze stałych z literatury, a świadek doważa go dwoma mnożnikami: udziałem mieszkalnym i gęstością. Drugi model, agent bilansujący, porównuje sumy ze spisem NSP 2021 i może dopytać świadka, a trzeci, szperacz, szuka w internecie liczby miejsc albo mieszkań dla największych budynków.
 
-Pilot to jeden arkusz ortofotomapy (800 × 500 m, 341 budynków), a największy dotąd przebieg to 5 arkuszy (1044 budynki) na tanim modelu Claude Haiku. Docelowo cały Wrocław (826 arkuszy, ok. 70 tys. budynków) przejdzie przez otwarty Qwen3.8-27B na własnym serwerze, a wynik ocenimy na końcu na SRLM, szacowanej rzeczywistej liczbie mieszkańców w 375 rejonach; instrukcja: `docs/serwer.md`. Architektura: `docs/architektura.md`, pełne prompty: `src/agenci/`, stan prac: `paper/population-estimation.tex`, wykresy: `notebooks/`.
+Przebieg testowy to 3 arkusze ortofotomapy wokół pl. Grunwaldzkiego (680 budynków) na tanim modelu Claude Haiku; cały potok krok po kroku, z rysunkami i wynikiem tego przebiegu, pokazuje `notebooks/proof_of_concept.ipynb`. Docelowo cały Wrocław (826 arkuszy, ok. 70 tys. budynków) przejdzie przez otwarty Qwen3.8-27B na własnym serwerze (`docs/serwer.md`), a wynik ocenimy raz, na końcu, na SRLM, czyli szacowanej rzeczywistej liczbie mieszkańców w 375 rejonach.
+
+| Gdzie | Co |
+| --- | --- |
+| `notebooks/proof_of_concept.ipynb` | cały potok na 3 arkuszach: dane, zdjęcia, LiDAR, fasady, świadek, pętla, szperacz, rejony SRLM i walidacja |
+| `docs/architektura.md` | agenci, pętla, dane w kodzie, gdzie co jest w `src/` |
+| `docs/rubryka.md` | skąd są stałe rubryki (Pirowski i Bartos 2018) |
+| `docs/serwer.md` | przebieg na całym mieście na serwerze z GPU |
+| `src/agenci/`, `src/ortofoto/` | kod i pełne prompty |
+| `eksperymenty/*.toml` | konfiguracje przebiegów |
+| `paper/` | artykuł na kurs (ACL) |
 
 ## Instalacja i dane
 
 Python 3.12+: `uv sync` albo `pip install -e .` (wtedy bez `uv run`).
 
-Arkusze ortofotomapy pobiera `uv run python -m ortofoto.pobierz <godło> ...` (np. `6.148.12.04.2`), BDOT10k z [geoportalu Dolnego Śląska](https://geoportal.dolnyslask.pl/imap/#gpmap=gp103), a `Grid_125_XLS.zip` z [ATOM GRID w GUS](https://geo.stat.gov.pl/atom-web/atom/GRID?spatial_dataset_identifier_code=GRID_2021_125m_xls&spatial_dataset_identifier_namespace=GRID), rozpakuj i ułóż tak, bez zmiany nazw:
+Arkusze ortofotomapy pobiera `uv run python -m ortofoto.pobierz <godło> ...` (np. `6.148.12.04.2`; `--srlm` pobiera cały Wrocław). Ręcznie trzeba pobrać BDOT10k z [geoportalu Dolnego Śląska](https://geoportal.dolnyslask.pl/imap/#gpmap=gp103), `Grid_125_XLS.zip` z [ATOM GRID w GUS](https://geo.stat.gov.pl/atom-web/atom/GRID?spatial_dataset_identifier_code=GRID_2021_125m_xls&spatial_dataset_identifier_namespace=GRID) i SRLM (załącznik raportu UWr dla UMW w BIP UMW), rozpakować i ułożyć tak, bez zmiany nazw:
 
 ```text
 data/*_<godło>_{N,E,S,W}.tif                    ok. 80 MB każdy
 data/*/BDOT10K/PL.PZGiK.337.0264__OT_BUBD_A.xml  powiat 0264, ok. 320 MB
 data/populacja/Grid_125_{1,2}.xlsx
+data/SRLM/SRLM_Wroclaw_20221231.shp              i pozostałe pliki shapefile
 ```
+
+Wysokość z LiDAR-u i punkty adresowe OSM kod pobiera sam przy pierwszym uruchomieniu do `data/kafle/`.
 
 ## Użycie
 
-Jeden plik `eksperymenty/*.toml` to jeden przebieg. Pole `estymator` wybiera wariant: `objetosc` to powierzchnia × wysokość, `objetosc_bdot` to samo, ale 0 dla niemieszkalnych i nieużytkowanych, `wzor` to świadek i wzór, a `petla` dodaje pętlę.
+Jeden plik `eksperymenty/*.toml` to jeden przebieg. Pole `estymator` wybiera wariant: `objetosc_bdot` to baseline bez modelu (objętość budynków mieszkalnych i eksploatowanych według BDOT10k), `wzor` to świadek i wzór, a `petla` dodaje pętlę ze spisem.
 
 ```toml
 estymator = "petla"
-z_rekordem = true  # czy modele widzą rekord BDOT10k
-model = "claude-haiku-5-5"
-[budynki]
-wszystkie = true   # albo kwadraty = 3, albo liczba = 40
+szukaj = true                     # szperacz dla największych budynków
+model = "claude-haiku-5-5"        # albo np. "Qwen/Qwen3.8-27B" przez vLLM
+arkusze = ["6.148.12.04.2"]       # bez tego pola: wszystkie arkusze z data/
 ```
 
 ```bash
-uv run python -m agenci.eksperyment eksperymenty/arkusz_haiku.toml --na-sucho  # bez API i zapisu
-ANTHROPIC_API_KEY=... uv run python -m agenci.eksperyment eksperymenty/arkusz_haiku.toml
-uv run python -m agenci.ewaluacja   # porównanie przebiegów
+uv run python -m agenci.eksperyment eksperymenty/arkusze_haiku.toml --na-sucho  # bez API i zapisu: test i wycena
+ANTHROPIC_API_KEY=... uv run python -m agenci.eksperyment eksperymenty/arkusze_haiku.toml
+uv run python -m agenci.ewaluacja   # ocena na SRLM
 uv run pytest
 ```
 
-Ocena na końcu: `uv run python -m agenci.ewaluacja --srlm` porównuje każdy przebieg z SRLM, czyli szacowaną rzeczywistą liczbą mieszkańców w 375 rejonach komunikacyjnych (raport UWr dla UMW, 2023, w BIP UMW; plik do `data/SRLM/`). SRLM liczy też niezameldowanych, więc jest o ok. 33% wyższy od NSP 2021. Oceniamy rejony, których co najmniej 95% powierzchni mieszkalnej ma predykcję; baseline dostaje ludność NSP rozłożoną wg objętości. `[budynki] rejon = 30` zawęża przebieg do kwadratów NSP przecinających rejon 30 (`eksperymenty/srlm30_*.toml`).
-
-Wyniki trafiają do `wyniki/eksperymenty/`: `<przebieg>.csv` (jeden wiersz na budynek), `__dialog.csv` (rozmowa agentów), `__bilans.csv` (kwadraty po rundach). Odpowiedzi modeli zostają w `wyniki/eksperymenty.sqlite`, więc powtórka jest darmowa, chyba że zmieni się prompt. Katalogu `wyniki/` nie ma w gicie.
+Wyniki trafiają do `wyniki/eksperymenty/`: `<przebieg>.csv` (jeden wiersz na budynek), `__dialog.csv` (rozmowa agentów), `__bilans.csv` (kwadraty po rundach). Odpowiedzi modeli zostają w `wyniki/eksperymenty.sqlite`, więc powtórka jest darmowa, chyba że zmieni się prompt. Odpowiedź bez poprawnego JSON-a nie trafia do pamięci, a klient ponawia ją do 5 razy; gdy świadek mimo to nie odpowie, budynek dostaje wynik z samej rubryki i rekordu (`zapasowy = True`). Gotowe budynki świadek dopisuje na bieżąco do `<przebieg>.czesc.csv`, więc przerwany przebieg wznawia się bez ponownego wycinania zdjęć. Katalogu `wyniki/` nie ma w gicie.
 
 ## Jak wyglądają dane
 
 | Źródło | Co to jest | Czego używamy |
 | --- | --- | --- |
-| Ortofotomapa skośna | Cztery pliki TIF czyli cztery fotografie z kierunków N, S, W, E, piksel to 5 cm, jeden TIF to 500m x 800m | obrazy dla modelu |
-| BDOT10k | Państwowa baza budynków z różnymi danymi o nich | obrys (stąd powierzchnia), funkcja, kondygnacje, stan |
-| NMPT i NMT (GUGiK) | Wysokość powierzchni z dachami i samego terenu ze skaningu laserowego (LiDAR), piksel 0,5 m i 1 m | wysokość budynku |
-| OpenStreetMap | Otwarta mapa, obrysy i punkty adresowe | adres budynku |
-| NSP 2021 | Spis powszechny, liczba osób w kwadracie 15m x 125m | gdy jest duża rozbieżność między spisem a sumą dla budynków w kwadracie to odpalamy agenta bilansującego |
+| Ortofotomapa skośna (GUGiK, nalot 2025) | ten sam teren sfotografowany pod kątem z 4 kierunków (N, E, S, W), piksel 5 cm, arkusz 800 × 500 m | zdjęcia dla świadka |
+| BDOT10k | państwowa baza budynków | obrys (stąd powierzchnia), funkcja, kondygnacje, stan |
+| NMPT i NMT (GUGiK) | wysokość powierzchni z dachami i samego terenu ze skaningu laserowego (LiDAR), piksel 0,5 m i 1 m | wysokość budynku |
+| Punkty adresowe OSM | adresy z importu państwowego rejestru | adres dla szperacza |
+| NSP 2021 | spis powszechny: osoby przypisane do adresów, zsumowane w kwadratach 125 × 125 m | sygnał dla agenta bilansującego |
+| SRLM | szacowana rzeczywista liczba mieszkańców w 375 rejonach, koniec 2022 (raport UWr dla UMW) | tylko ocena na końcu |
 
-Spis przypisuje ludzi do punktów adresowych, a długi blok leży w kilku kwadratach, więc mieszkańców budynku dzielimy między kwadraty według tego, jaka część jego obrysu leży w każdym. Kwadraty na brzegach się ucinają więc dopóki działamy na jednym arkuszu to te kwadraty których wszystkie budynki mieszkalne leżą na arkuszu.
-
-Zdjęcia TIG mają współrzędne, więc obrys z BDOT10k da się na nie łatwo nałożyć. Model dostaje z tych zdjęć 4 fasady (czyli wycinki tych samych zdjęć ze ścianą wyprostowaną do prostokąta). Przy krawędzi arkusza 31 budynków ma 3 zdjęcia, a 30 nie ma żadnego i dostaje sam rekord.
+Zdjęcia mają współrzędne, więc obrys z BDOT10k da się na nie nałożyć. Podstawa budynku leży na swoim miejscu, a dach jest przesunięty od kamery o 0,96 × wysokość; między nimi widać ścianę. Z każdego kierunku świadek dostaje widok całego budynku i fasadę wyprostowaną do prostokąta. Budynki przy krawędzi obszaru, których zdjęcia nie obejmują w całości, dostają mniej widoków albo sam rekord.
 
 ## Jeden budynek od początku do końca
 
-Prawdziwy przebieg modlei na Claude Haiku dla akademika przy pl. Grunwalldzkim Wzór daje 322 osoby, a spis ma w tym kwadracie 33, więc kwadrat dostaje flagę i odpala się agent bilansujący - Agent dopytuje świadka, świadek potwierdza swój opis i wynik się nie zmienia.
+Prawdziwy przebieg `arkusze_haiku` (Claude Haiku) dla akademika przy Piastowskiej 1. Świadek widzi typowy akademik i zostawia oba mnożniki na 1, więc wzór daje 378 osób. Spis ma w tym kwadracie 33 osoby, kwadrat dostaje flagę, a agent bilansujący uznaje nadwyżkę za spodziewaną (studenci bez meldunku) i o budynek nie pyta. Szperacz znajduje na stronie uczelni 802 miejsca dla obu segmentów akademika, z których ten dostaje 674 według powierzchni brutto.
 
-![Schemat blokowy jednego budynku, od rekordu BDOT10k do wyniku 321,71 osoby](docs/przyklad_budynku.png)
+![Schemat blokowy jednego budynku, od rekordu BDOT10k do wyniku](docs/przyklad_budynku.png)
 
-Odpowiedzi modeli są dosłowne, a prompty które dostały skrócone.
+Odpowiedzi modeli są dosłowne, a prompty, które dostały, skrócone.
 
-### Wzór i rubryka
+## Wzór i rubryka
 
 ```text
-dom:                      osoby_na_dom × udział
-wielorodzinny, zbiorowy:  powierzchnia × kondygnacje × udział / m² na osobę
+dom:                      2,88 osoby × udział × gęstość
+wielorodzinny, zbiorowy:  obrys × kondygnacje × udział × gęstość / m² na osobę
 ```
 
- Stałe tego ile ludzi mieszka średnio dla typu budynku bierzemy z literatury i hardocdujemy w `estymatory.py`. Powierzchnia to obrys × kondygnacje z BDOT10k.
+Stałe są z literatury i siedzą w `src/agenci/estymatory.py`. Obrys × kondygnacje z BDOT10k to powierzchnia brutto. Udział i gęstość daje świadek; oba równe 1 znaczą „typowy budynek tej klasy”.
 
 | Klasa | Wartość w kodzie | Na 100 m² | Źródło |
 | --- | --- | --- | --- |
@@ -78,56 +87,52 @@ wielorodzinny, zbiorowy:  powierzchnia × kondygnacje × udział / m² na osobę
 | budynek wielorodzinny | 37,08 m² na osobę | 2,70 osoby | jak wyżej |
 | zamieszkanie zbiorowe | 31 m² na miejsce | 3,23 osoby | [College Housing Report 2014](http://www.mahlum.com/pdf/CPM2014CollegeHousingReport%281%29.pdf), tab. 1: mediana 333,3 stopy² z 52 akademików w USA |
 
-Pracy z takimi liczbami dla samego Wrocławia nie znaleźliśmy, więc bierzemy Kraków. Pirowski i Bartos liczą z tej samej bazy BDOT10k i z tą samą definicją powierzchni co my, a mieszkania w obu miastach są podobne: GUS na koniec 2024 roku podaje 34,6 m² użytkowych na osobę i 1,71 osoby na mieszkanie we [Wrocławiu](https://www.polskawliczbach.pl/Wroclaw) oraz 33,4 m² i 1,73 osoby w [Krakowie](https://www.polskawliczbach.pl/Krakow). Różnica jest mała, więc pracujemy na tych stałych skoro nie mamy danych o zużyciu wody.
+Pracy z takimi liczbami dla Wrocławia nie znaleźliśmy, więc bierzemy Kraków: Pirowski i Bartos liczą z tej samej bazy BDOT10k i z tą samą definicją powierzchni co my, a mieszkania w obu miastach są podobne (GUS, koniec 2024: 34,6 m² użytkowych na osobę i 1,71 osoby na mieszkanie we Wrocławiu, 33,4 m² i 1,73 w Krakowie). Stałą 37,08 m² dopasowano do zameldowanych mieszkańców Krakowa i liczono na całej powierzchni budynków mieszkalnych, razem z klatkami i lokalami usługowymi w parterach (`docs/rubryka.md`).
 
-Dla akademików polskiego źródła nie znaleźliśmy, a liczba, którą wzieliśmy pochodzi z ankiety branżowego pisma z USA. Ponad połowa tamtych akademików ma też sale zajęciowe, a nasza klasa obejmuje też klasztory i domy opieki. Dla porównania [Dom Studencki nr 7 UW](https://www.uw.edu.pl/standard-domu-studenckiego-nr-7-uw/) ma prawie 13 000 m² i ponad 380 miejsc, czyli ok. 34 m² na miejsce, licząc z kondygnacją podziemną. TU MOŻNA WZIĄĆ POTEM STAŁĄ DLA ZABUDOWY RODZINNEJ
+Dla akademików polskiego źródła nie znaleźliśmy; liczba pochodzi z ankiety branżowego pisma z USA, a nasza klasa obejmuje też klasztory i domy opieki. Dla porównania [Dom Studencki nr 7 UW](https://www.uw.edu.pl/standard-domu-studenckiego-nr-7-uw/) ma prawie 13 000 m² i ponad 380 miejsc, czyli ok. 34 m² na miejsce.
 
-### Co daje świadek
+## Co daje świadek
 
-Świadek to VLM i patrzy na otrzymane fasady i informacje o budynku z BDOT. Prompt każe mu odpowiedzieć w JSON o stałych polach, żeby potem to łądnie wczytać w kodzie. JSON ma `typ` który wybiera klasę rubryki (czyli dom, lub wielorodzinna, lub zamieszkanie zbiorowe) albo daje 0 (`uslugi`, `przemysl`, `garaz`), `udzial_mieszkalny` mnoży wynik (czyli np. tutaj damy udzial=0.8 bo na 1 pietrze z 5 nikt nie mieszka), a `stan` inny niż `uzytkowany` daje 0 (bo np. budynek jest zniszczony). Daje jescze `kondygnacje` czyli liczbe pięter, ale od VLM ierzemy je tylko wtedy gdy w BDOT10k ich ni ma (9 z 341 budynków) dla arkusza z Grnwaldu.
+Świadek dostaje widoki i fasady budynku, rekord z BDOT10k i to, ile osób da wzór dla klasy z rekordu przy obu mnożnikach równych 1. Sam liczby mieszkańców nie podaje. Odpowiada w JSON o stałych polach, w tej kolejności, żeby najpierw opisał, co widzi, a potem podał liczby:
 
-VLM dostaje powierzchnię i kondygnacje z BDOT10k.
+| Pole | Co znaczy | Jak wchodzi do wzoru |
+| --- | --- | --- |
+| `uzasadnienie` | co widać na zdjęciach (witryny, balkony, okna, wejścia) i skąd mnożniki | nie wchodzi |
+| `typ` | kamienica, blok PRL, blok nowy, dom, szeregowiec, zbiorowy, usługi, przemysł, garaż, inny | wybiera klasę rubryki; usługi, przemysł i garaż dają 0 |
+| `stan` | użytkowany, w budowie, pustostan | inny niż użytkowany daje 0 |
+| `udzial_mieszkalny` | jaka część budynku to mieszkania w porównaniu z typowym budynkiem tej klasy, od 0 do 1 | mnoży wynik |
+| `gestosc` | ile razy gęściej albo rzadziej niż typowo mieszkają tu ludzie, od 0,3 do 3 | mnoży wynik |
+| `pewnosc` | od 0 do 1 | czyta tylko agent bilansujący |
 
-W pilocie od świadka zależy praktycznie tylko udział mieszkalny. Klasa budynku zgadza się z BDOT10k w 330 z 341 budynków, stan to `uzytkowany` w 338, a udział wynosi od 0,8 do 0,95 w 241 z 246 budynków z szacunkiem powyżej zera.
+Udział mówi, gdzie są mieszkania: zwykły sklep w parterze to wciąż udział 1, bo stała już go obejmuje; mniej daje się, gdy usługi zajmują więcej, np. biura na piętrach. Gęstość mówi, jak gęsto mieszkają ludzie: więcej niż 1 przy mikrokawalerkach, pokojach na wynajem czy hotelu pracowniczym, mniej przy dużych mieszkaniach, częściowo pustym budynku albo małej wspólnocie w dużym budynku (dom parafialny, klasztor). Dom z dwoma mieszkaniami ma gęstość 2. Gdy obraz wyraźnie przeczy rekordowi, świadek wybiera inny typ i tym samym inną klasę rubryki. Kondygnacje bierzemy tylko z BDOT10k, bo mają je wszystkie budynki mieszkalne.
 
-### Wysokość i dach na zdjęciu
+## Wysokość i dach na zdjęciu
 
-BDOT10k nie ma pola wysokości, tylko kondygnacje. Wysokość bierzemy ze skaningu laserowego GUGiK: mediana NMPT w obrysie budynku minus teren z NMT (340 z 341 budynków). Kod pobiera oba rastry sam przy pierwszym uruchomieniu i zapisuje je w `data/`. Budynek, którego skaning jeszcze nie widział, dostaje 3,3 m × kondygnacje + 2 m (1 budynek w budowie).
-
-Dach leży na zdjęciu o 0,96 × wysokość od podstawy, w stronę od kamery. Mnożnik to tangens odchylenia kamery od pionu (ok. 44°). Wyznaczyliśmy go, dopasowując teksturę dachu między czterema widokami i dzieląc znalezione przesunięcie przez wysokość z LiDAR-u: na 61 budynkach z pewnym dopasowaniem mediana to 0,96, a cztery kierunki dają od 0,955 do 0,976.
-
-Znając tę trygonometrią możemy rysować obryss dachu i wycinać fasady. Wysokość liczy też baseline objętości, a do wzoru weszłaby tylko przy braku kondygnacji i w BDOT10k, i u świadka. W pilocie się to nie zdarzyło.
+BDOT10k nie ma pola wysokości. Bierzemy ją ze skaningu laserowego GUGiK: mediana NMPT w obrysie budynku minus teren z NMT. Budynek, którego skaning jeszcze nie widział, dostaje 3,3 m × kondygnacje + 2 m. Dach leży na zdjęciu o 0,96 × wysokość od podstawy, w stronę od kamery; mnożnik to tangens odchylenia kamery od pionu (ok. 44°), wyznaczony z dopasowania tekstury dachów między czterema widokami na 61 budynkach. Wysokość służy do rysowania dachu i wycinania fasad, a do wzoru wchodzi tylko przy braku kondygnacji w BDOT10k.
 
 ## Jak działa pętla
 
-Kwadrat dostaje flagę, gdy szacunek po skalowaniu do spisu różni się od niego ponad 1,5 raza i o co najmniej 25 osób. To nasz próg, sprawdzony w symulacji. Pętla rusza przy fladze albo gdy świadek przeczy BDOT10k, np. pisze, że nikt nie mieszka w budynku mieszkalnym.
+Pętla to eksperyment z dodatkowym sygnałem: spisem NSP 2021. Spis liczy osoby przypisane do adresów w 2021 roku, a my szacujemy, ile osób naprawdę mieszka w budynku dziś. We Wrocławiu wiele osób mieszka bez meldunku (studenci, pracownicy, nowe osiedla), więc spis jest niemal na pewno niższy od naszego szacunku. Agent dostaje to w prompcie wprost i nie traktuje spisu jako wartości docelowej; nadwyżka przy akademikach i nowych osiedlach jest spodziewana, a bardziej podejrzany jest szacunek wyraźnie niższy od spisu.
 
-Agent nie widzi zdjęć. Czyta opisy takich budynków i wybiera, o co zapytać świadka. To jego jedyny wpływ na wynik, bo liczb nie zmienia, a diagnozy trafiają tylko do zapisu.
+Mieszkańców budynku dzielimy między kwadraty spisu według tego, jaka część obrysu leży w każdym, i porównujemy tylko kwadraty, w których szacunek ma każdy budynek mieszkalny. Kwadrat dostaje flagę, gdy suma szacunków różni się od spisu ponad 1,5 raza w dowolną stronę i o co najmniej 25 osób. Pętla rusza przy fladze albo gdy świadek przeczy BDOT10k, np. pisze, że nikt nie mieszka w budynku mieszkalnym.
 
-Filtr w kodzie przepuszcza pytania tylko o te budynki, jedno na budynek w rundzie, bez powtórek, najwyżej 20 z jednego wywołania agenta (limit kosztu; agent dostaje kwadraty w paczkach po 25), i wycina z nich cyfry, żeby świadek nie poznał liczb ze spisu. Świadek ma zmienić zdanie tylko wtedy, gdy uzasadnia to obraz, a wzór liczy wszystko od nowa. Rundy są najwyżej 2 (Du i in. 2024).
-
-W pilocie flagę ma 1 z 14 kwadratów, ten z przykładu. Agent zapytał o 7 budynków, a świadek zmienił 2 opisy, w tym blok opisany wcześniej jako usługi. Suma arkusza wzrosła z 8921 do 8942 osób. Wynik końcowy to kolumna `mieszkancy`, a stan sprzed pętli to `mieszkancy_r0`.
-
-<img width="1260" height="440" alt="image" src="https://github.com/user-attachments/assets/017d555a-4877-48c4-98a6-9c2d7c89efca" />
+Agent nie widzi zdjęć. Czyta opisy budynków z takich kwadratów, stawia diagnozę i wybiera, o co zapytać świadka (`typ`, `stan`, `udzial_mieszkalny` albo `gestosc`). Liczb nie zmienia, a diagnozy trafiają tylko do zapisu. Filtr w kodzie przepuszcza jedno pytanie na budynek w rundzie, bez powtórek, najwyżej 20 z jednego wywołania agenta, i wycina z pytań cyfry, żeby świadek nie poznał liczb ze spisu. Świadek zmienia zdanie tylko wtedy, gdy uzasadnia to obraz, a wzór liczy wszystko od nowa. Rundy są najwyżej 2 (Du i in. 2024). Stan sprzed pętli to kolumna `mieszkancy_r0`. Progi i limity to wartości na start, do ustalenia z ekspertami.
 
 ## Szperacz
 
-Większość ludzi i błędu siedzi w kilku dużych budynkach. Przy `szukaj = true` model z wyszukiwarką internetową (szperacz) dostaje adresy i rekord najwyżej 4 budynków z każdego arkusza: najpierw typu `zbiorowy`, potem tych z największym szacunkiem. Szuka liczby miejsc albo mieszkań podanej dla tego konkretnego budynku, najwyżej 2 zapytaniami. Liczba miejsc zastępuje szacunek, a liczbę mieszkań mnożymy przez 1,71 osoby (GUS, Wrocław, 2024). Bez źródła zostaje wynik wzoru (`mieszkancy_wzor`); stronę i zdanie z liczbą zapisujemy w `zrodlo` i `cytat`.
+Większość ludzi siedzi w kilku dużych budynkach. Przy `szukaj = true` model z wyszukiwarką internetową dostaje adresy i rekord najwyżej 4 budynków z każdego arkusza: najpierw zamieszkania zbiorowego, potem tych z największym szacunkiem. Szuka liczby miejsc albo mieszkań podanej dla tego konkretnego budynku, najwyżej 2 zapytaniami. Liczba miejsc zastępuje szacunek, a liczbę mieszkań mnożymy przez 1,71 osoby (GUS, Wrocław, 2024). Bez źródła zostaje wynik wzoru (`mieszkancy_wzor`); stronę i zdanie z liczbą zapisujemy w `zrodlo` i `cytat`, a trafienia trzeba przejrzeć.
 
-Na 5 arkuszach (20 budynków, 0,43 USD) szperacz znalazł liczbę dla 6, np. 802 miejsca w akademiku przy Piastowskiej 1. Dwa trafienia są wątpliwe (wiersz tabeli bez nagłówka, miejsca dla turystów), więc źródła trzeba przejrzeć; wyniki są w `notebooks/piec_arkuszy.ipynb`.
+Ewidencja dzieli jeden budynek zamieszkania zbiorowego, np. akademik, na kilka segmentów, a liczba miejsc w sieci dotyczy całości. Stykające się segmenty takiego budynku z tą samą funkcją w BDOT10k szukamy więc razem, a znalezioną liczbę dzielimy między nie według powierzchni brutto. Takie grupowanie łączy też osobne akademiki spięte łącznikiem (np. przy pl. Grunwaldzkim 26 i 28); szperacz dostaje wtedy kilka adresów i zwykle nie podaje jednej liczby.
 
 ## Co sprawdzamy
 
-Dla pojedynczego budynku nie mamy prawdziwej liczby mieszkańców, więc sumy w kompletnych kwadratach porównujemy ze spisem. Rubryka nie pochodzi ze spisu, więc stan przed pętlą to ocena niezależna. Spearman mówi, czy kolejność kwadratów się zgadza, a WAPE, jaką część ludzi trzeba by przesunąć między kwadratami. Przed WAPE każdą serię skalujemy do sumy spisu, więc oceniamy rozkład i da się porównać objętość w m³ z osobami. Punktem odniesienia jest `objetosc_bdot`, bo działa bez modelu. Wariant jest lepszy, gdy przedział różnicy względem niej (bootstrap po kwadratach) nie obejmuje zera.
+Dla pojedynczego budynku nie mamy prawdziwej liczby mieszkańców, więc sumujemy szacunki w rejonach i porównujemy z SRLM. Raport Uniwersytetu Wrocławskiego dla UMW liczy rzeczywistą liczbę mieszkańców z meldunków, lokali i miejsc w akademikach, także niezameldowanych; dla miasta wychodzi 893 506 osób na koniec 2022 roku, o ok. 33% więcej niż w spisie. SRLM nie widzi żaden agent ani prompt i oceniamy na nim raz, po przebiegu na całym mieście.
 
-Opis budynku porównujemy z BDOT10k: F1 dla pytania "czy ktoś tu mieszka" i błąd kondygnacji. Ma to sens tylko przy `z_rekordem = false`, bo inaczej model widzi odpowiedź.
+Budynek przy granicy rejonów dzieli się według obrysu. Oceniamy rejony, których co najmniej 95% powierzchni mieszkalnej z BDOT10k ma szacunek. Miary:
 
-Agent w pętli widział sumy kwadratów, dlatego oceniamy `mieszkancy_r0`, choć wynikiem końcowym jest `mieszkancy`. Czy pętla pomaga, jeszcze nie wiemy: uczciwy test to zgodność z BDOT10k przed pętlą i po niej przy `z_rekordem = false`.
+- poziom: suma szacunków / suma SRLM, czyli czy szacujemy tylu ludzi, ilu jest naprawdę,
+- Spearman: czy kolejność rejonów od najmniej do najbardziej zaludnionego się zgadza (1 to ta sama kolejność),
+- WAPE: jaką część ludzi trzeba by przesunąć między rejonami, gdyby suma szacunków równała się sumie SRLM (0 to ten sam rozkład),
+- rejony z największym i najmniejszym stosunkiem szacunku do SRLM: z nich wyciągamy wnioski, gdzie i dlaczego model się rozjeżdża.
 
-Na 5 arkuszach (`piec_arkuszy_haiku`, rekord widoczny, 82 kwadraty, 1,12 USD) Haiku przed pętlą ma Spearmana 0,86 i WAPE 0,28, a objętość z BDOT10k 0,89 i 0,29. Różnica to -0,04 [-0,10; +0,01] w Spearmanie i -0,01 [-0,05; +0,05] w WAPE, więc ze spisem obie metody zgadzają się tak samo. Nie wiemy też, czy pomagają obrazy, bo świadka bez obrazów jeszcze nie ma.
-
-Na końcu porównujemy sumy z SRLM (`--srlm`): raport Uniwersytetu Wrocławskiego dla UMW liczy z meldunków, lokali i miejsc w akademikach także niezameldowanych, więc dla miasta wychodzi 893 506 osób, o ok. 33% więcej niż w spisie. SRLM nie widzi żaden agent. Na 5 arkuszach co najmniej 95% powierzchni mieszkalnej mają tylko 5 rejonów: Haiku daje tam 85% SRLM, a NSP i objętość rozłożona na ludność NSP po 61-62%; WAPE rozkładu to 0,05 wobec 0,14 dla objętości. Przy 5 rejonach to sprawdzenie, że ocena działa, a nie wynik.
-
-Kwadrat z przykładu: spis 33, Haiku po skalowaniu 185, objętość 134. Spis liczy miejsce zamieszkania, a nie pobyt, więc studenci w dużej części nie są przypisani do akademika. Bez tego kwadratu Haiku ma Spearmana 0,86 i WAPE 0,14, a objętość 0,80 i 0,18.
-
-Przed skalowaniem szacunek to 5 828 osób wobec 5 145 w spisie, czyli +13%. Gdyby nie mnożenie przez udział, byłoby 6 819, choć 37,08 m² liczono na całą powierzchnię budynków, razem z usługami na parterze. Na całe miasto sam BDOT10k z tą rubryką, bez udziału, daje ok. 864 tys. osób wobec 657 tys. w spisie na tych samych kwadratach. Nadwyżka nie musi być błędem: [Uniwersytet Wrocławski](https://uwr.edu.pl/en/our-scientists-counted-all-the-residents-of-wroclaw/) szacuje faktyczną liczbę mieszkańców na 893 506 na koniec 2022 roku.
+Punktem odniesienia jest sam spis rozłożony na rejony oraz baseline `objetosc_bdot`, na który rozkładamy ludność ze spisu. SRLM jest na koniec 2022 roku, a zdjęcia i BDOT10k z 2025, więc w rejonach z osiedlami oddanymi później spodziewamy się szacunku wyższego od SRLM. Możliwe wspólne źródło: SRLM liczy akademiki jako 95% miejsc z wykazów w internecie, a szperacz szuka liczby miejsc w tych samych wykazach, więc w rejonach z akademikami zgodność może częściowo wynikać ze wspólnych danych.
