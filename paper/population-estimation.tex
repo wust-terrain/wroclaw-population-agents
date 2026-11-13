@@ -49,7 +49,7 @@
 Traffic models need the people who actually live in each building, but the Polish census reports only registered residents per 125\,m cell.
 In our system a vision-language model (VLM) looks at a building in oblique aerial photos and reads its record from the national building database; a formula with constants from the literature computes residents, and the VLM reweights it with two multipliers, the residential share and the density.
 A second model questions the VLM where totals disagree with the census, which it treats as a lower bound, and a third searches the web for the number of beds or flats in the largest buildings.
-On a test area of three sheets (680 buildings) with a cheap model, Claude Haiku, the regional totals reach 101\% of SRLM in the three regions the area fully covers, against 55\% for a volume baseline that inherits the census total; per region the ratio ranges from 0.83 to 1.39.
+On a test area of three sheets (680 buildings) with a cheap model, Claude Haiku, the regional totals reach 103\% of SRLM in the three regions the area fully covers, against 55\% for a volume baseline that inherits the census total; per region the ratio ranges from 0.96 to 1.26.
 The final run covers the whole city with an open-weight VLM and is evaluated once against an independent estimate of actual residents.
 \end{abstract}
 
@@ -111,10 +111,9 @@ Each agent is one stateless model call answering in JSON forced by a schema, and
 The code calls Claude through its API or any VLM served by vLLM, logs every call, retries a call without valid JSON up to five times, and resumes an interrupted run; the prompts, in Polish, are in the repository.
 
 \paragraph{Witness.}
-It gets the images, the BDOT10k record and the number of residents the formula gives for the record's class.
-It returns, in this order, a rationale, the type, the state, the residential share and the density, but not residents.
-Both multipliers are relative to a typical building of the class: share 1 means flats as usual, including ordinary shops on the ground floor, and density above 1 means smaller flats or more people per flat (micro-studios, rooms to let), below 1 larger flats, partial vacancy or a small community in a large building.
-The prompt asks for 1 unless a visible feature justifies another value.
+It gets the images, the BDOT10k record and the residents the formula gives for the record's class, and returns, in this order, a rationale, whether signs of dwellings are visible (laundry or plants on balconies, varied curtains, satellite dishes), the type, the state, the residential share and the density, but not residents.
+Both multipliers are 1 for a typical building of the class, ordinary ground-floor shops included; the share drops only when whole upper floors look non-residential, and the density moves only for visible reasons, which the prompt lists for Polish cities (micro-apartments and workers' hostels up, large tenement flats and boarded-up windows down).
+A building that BDOT10k lists as non-residential gets residents only with visible signs of dwellings and a confidence of at least 0.6, because on ambiguous images the witness tended to answer ``tenement, share 0.5''.
 
 \paragraph{Formula.}
 A building not in use, or of a type without flats, gets 0.
@@ -144,22 +143,20 @@ The first two come from Kraków, with the same database and similar housing (GUS
 \end{table}
 
 \paragraph{Loop.}
-In at most two rounds, code sums the estimates in census cells that have an estimate for every residential building and flags a cell that differs from the census more than 1.5 times and by at least 25 people.
-The agent's prompt says that the census counts registered residents and is almost certainly lower than the actual number, so a surplus at dormitories and new estates is expected and an estimate clearly below the census is more suspicious.
-The agent reads the flagged cells as text, plus any building where the witness contradicts the record on whether anyone lives there, and chooses what to ask; it sees no images and changes no numbers.
-A filter in code allows one question per building per round, at most 20 per call, and strips digits so that census figures never reach the witness.
-The witness changes its answer only if the image justifies it, and the formula then recomputes every estimate.
+In at most two rounds, code flags a census cell whose estimate differs from the census more than 1.5 times and by at least 25 people, counting only cells with an estimate for every residential building.
+The agent, told that the census counts registered residents and is almost certainly too low, reads the flagged cells and the buildings where the witness contradicts the record, and chooses what to ask; it sees no images, changes no numbers, and a filter strips digits from its questions.
+The witness changes its answer only if the image justifies it, and the formula recomputes every estimate.
 
 \paragraph{Search agent.}
 Most residents sit in a few large buildings.
-For at most 4 buildings per sheet, collective housing first and then the largest estimates, a model with web search gets the addresses and the record and looks for a published number of beds or flats, in at most 2 searches.
-BDOT10k splits a dormitory into segments, so touching segments of a collective building with the same function are searched together and the number is split by floor area.
-Beds replace the estimate, flats are multiplied by 1.71 persons, the 2024 GUS figure for Wrocław, and without a source for that very building the formula's result stays.
+For every dormitory, boarding school and hotel in BDOT10k and for 4 more of the largest buildings per sheet, a model with web search looks for a published number of beds or flats for that very building, in at most 2 searches.
+Hotels are included because private dormitories with micro-apartments are registered as hotels; a studio counts as one bed and a tourist hotel as none.
+Touching segments with the same function are searched together and the number is split by floor area; segments without an address of their own are skipped, because with a neighbour's address they found its beds again.
+Beds replace the estimate and flats count 1.71 persons (GUS, Wrocław 2024).
 
 \paragraph{One building.}
-A student dormitory at Piastowska 1 has 1,466.6\,m$^2$ and 8 storeys in BDOT10k; the witness answers collective housing with share 1 and density 1, which gives 1,466.6 $\times$ 8 / 31 = 378 residents.
-The census has 33 people in that cell, so it is flagged; the agent calls the surplus census noise from unregistered students and asks nothing.
-The search agent finds 802 beds for the dormitory's two segments on the university's website, and this segment gets 674 of them by floor area.
+A dormitory at Piastowska 1 (1,466.6\,m$^2$, 8 storeys) is collective housing with both multipliers 1, so 1,466.6 $\times$ 8 / 31 = 378 residents; its cell has 33 people in the census and is flagged, but the agent blames the constant and asks nothing.
+The search agent finds 802 beds for both segments of the dormitory, and this one gets 674 by floor area.
 
 \section{Evaluation}
 
@@ -173,10 +170,10 @@ References without a model: the census split between regions by area, and buildi
 
 \section{Results on Three Sheets}
 
-Haiku 5.5 processed 680 buildings for 0.94 USD, with no fallback to the record, and estimates 21,094 residents (Figure~\ref{fig:szacunki}).
-The witness left the share at 1 for 376 of 456 residential buildings and the density for 431, giving other values with a visible reason, and never gave a density above 1.
-The loop flagged 24 of 46 comparable cells, almost all above the census (16,958 against 10,629 residents in these cells), asked about 17 buildings and changed 3 descriptions; some questions concerned storeys, which no longer enter the formula.
-The search agent checked 12 buildings and found beds for 3; one group joined three separate dormitories linked by passages, and the agent declined to give one number.
+Haiku 5.5 processed 680 buildings for 1.06 USD, with no fallback to the record, and estimates 21,139 residents (Figure~\ref{fig:szacunki}).
+The share is 1 for 425 of 434 residential buildings and the density 1 for 413, above 1 for 7 and below 1 for 14; non-residential buildings in BDOT10k got residents in 6 cases, against 25 (789 residents) with the earlier prompt without the check for signs of dwellings.
+The loop flagged 25 of 46 cells, almost all above the census (17,388 against 10,629 residents), asked about 10 buildings and changed 4 answers, among them a university building first described as a dormitory with 237 residents.
+The search agent found numbers for 6 of 17 buildings, including the hotel at wybrzeże Pasteura 18, which turned out to be the Starter micro-apartments with 170 units (counted as flats, which overstates studios); for a complex of three dormitories it found only two and gave no number.
 
 \begin{table}[t]
   \centering
@@ -187,8 +184,8 @@ The search agent checked 12 buildings and found beds for 3; one group joined thr
     \midrule
     Census split by area & 0.45 & 0.43 \\
     Volume $\times$ BDOT & 0.55 & 0.21 \\
-    System, before loop & 1.01 & 0.19 \\
-    System, final & 1.01 & 0.16 \\
+    System, before loop & 1.04 & 0.15 \\
+    System, final & 1.03 & 0.10 \\
     \bottomrule
   \end{tabular}
   \caption{Sums against SRLM in the three fully covered regions (7,869 residents).}
@@ -196,8 +193,8 @@ The search agent checked 12 buildings and found beds for 3; one group joined thr
 \end{table}
 
 Against SRLM the level is close to 1, while the baseline and the census stay far below (Table~\ref{tab:wyniki}).
-Per region the ratio is 0.99 (UWr 2), 1.39 (Politechnika) and 0.83 (Most Szczytnicki).
-In Politechnika the witness described two university buildings as collective housing (about 340 residents) and two monasteries count 31\,m$^2$ per person (about 240); Most Szczytnicki is mostly dormitories, with beds found for only some of them.
+Per region the ratio is 0.96 (UWr 2), 1.26 (Politechnika) and 0.97 (Most Szczytnicki).
+In Politechnika the estimate equals the rubric applied to the BDOT10k record: tenements at 37.08\,m$^2$ per person already exceed SRLM for the whole region, and monasteries at 31\,m$^2$ per person add about 300.
 With three regions this shows only that the evaluation works and where to look; we do not tune prompts on them.
 
 \begin{figure}[t]

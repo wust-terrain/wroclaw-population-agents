@@ -1,5 +1,7 @@
 """Trzy reguły, których złamanie po cichu psuje wyniki: wzór, flaga rozjazdu i odcięcie świadka od liczb ze spisu."""
 
+from dataclasses import replace
+
 import pandas as pd
 
 from agenci.estymatory import z_rekordu, ze_wzoru
@@ -11,8 +13,8 @@ KARTA = Karta(id="a", pow_zabudowy_m2=100.0, h_m=12.0, zrodlo_h="z kondygnacji",
               funkcje="budynek wielorodzinny", kategoria="eksploatowany", mieszkalny_bdot=True)
 
 
-def obs(typ, udzial=1.0, stan="uzytkowany", gestosc=1.0):
-    return {"typ": typ, "udzial_mieszkalny": udzial, "gestosc": gestosc, "stan": stan}
+def obs(typ, udzial=1.0, stan="uzytkowany", gestosc=1.0, widac=True, pewnosc=0.8):
+    return {"typ": typ, "udzial_mieszkalny": udzial, "gestosc": gestosc, "stan": stan, "widac_mieszkania": widac, "pewnosc": pewnosc}
 
 
 def test_wzor():
@@ -21,6 +23,14 @@ def test_wzor():
     assert ze_wzoru(obs("zbiorowy"), KARTA) == 100 * 4 / 31.0
     assert ze_wzoru(obs("dom_jednorodzinny", gestosc=2.0), KARTA) == 2.88 * 2  # dom z dwoma mieszkaniami
     assert z_rekordu(KARTA) == 100 * 4 / 37.08  # wynik zapasowy: klasa z BDOT10k, mnożniki 1
+
+
+def test_budynek_niemieszkalny_wymaga_sladow_mieszkan_i_pewnosci():
+    uczelnia = replace(KARTA, funkcja="szkoła wyższa", funkcje="szkoła wyższa", mieszkalny_bdot=False)
+    assert ze_wzoru(obs("kamienica", 0.5, widac=True, pewnosc=0.8), uczelnia) == 100 * 4 * 0.5 / 37.08
+    assert ze_wzoru(obs("kamienica", 0.5, widac=True, pewnosc=0.5), uczelnia) == 0.0  # za mało pewny
+    assert ze_wzoru(obs("kamienica", 0.5, widac=False, pewnosc=0.9), uczelnia) == 0.0  # nie widać mieszkań
+    assert ze_wzoru(obs("kamienica", widac=False, pewnosc=0.3), KARTA) == 100 * 4 / 37.08  # budynek mieszkalny: bez progu
     assert ze_wzoru(obs("uslugi"), KARTA) == 0.0
     assert ze_wzoru(obs("kamienica", stan="pustostan"), KARTA) == 0.0
     assert ze_wzoru(obs("inny"), KARTA) == 100 * 4 / 37.08  # typ "inny" w budynku mieszkalnym: klasa z BDOT10k

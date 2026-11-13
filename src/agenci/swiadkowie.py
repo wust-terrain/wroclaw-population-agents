@@ -4,7 +4,7 @@ To moduł percepcji: dostaje kartę budynku i zwraca typ zabudowy, stan oraz dwa
 Liczbę mieszkańców liczy dopiero estymator, więc da się osobno sprawdzić, co wnosi obraz, a co rubryka.
 """
 
-from agenci.estymatory import M2_NA_OSOBE, OSOBY_NA_DOM, klasa_bdot, z_rekordu
+from agenci.estymatory import M2_NA_OSOBE, OSOBY_NA_DOM, PROG_PEWNOSCI, klasa_bdot, z_rekordu
 from agenci.llm import obraz, tekst
 
 TYPY = {
@@ -23,19 +23,20 @@ STANY = ["uzytkowany", "w_budowie", "pustostan"]
 GESTOSC = (0.3, 3.0)  # zakres mnożnika gęstości; poza nim przycinamy
 WIDOKI = {"N": "kamera patrzy na północ, widać ścianę południową", "E": "kamera patrzy na wschód, widać ścianę zachodnią",
           "S": "kamera patrzy na południe, widać ścianę północną", "W": "kamera patrzy na zachód, widać ścianę wschodnią"}
-OPIS = ["typ", "stan", "udzial_mieszkalny", "gestosc"]  # to, co świadek twierdzi o budynku i co czyta wzór
+OPIS = ["widac_mieszkania", "typ", "stan", "udzial_mieszkalny", "gestosc"]  # to, co świadek twierdzi o budynku i co czyta wzór
 
 SCHEMAT_OBSERWACJI = {  # uzasadnienie pierwsze: model generuje pola po kolei, więc najpierw opisuje, co widzi, a potem daje liczby
     "type": "object",
     "properties": {
         "uzasadnienie": {"type": "string"},
+        "widac_mieszkania": {"type": "boolean"},
         "typ": {"type": "string", "enum": list(TYPY)},
         "stan": {"type": "string", "enum": STANY},
         "udzial_mieszkalny": {"type": "number"},
         "gestosc": {"type": "number"},
         "pewnosc": {"type": "number"},
     },
-    "required": ["uzasadnienie", "typ", "stan", "udzial_mieszkalny", "gestosc", "pewnosc"],
+    "required": ["uzasadnienie", "widac_mieszkania", "typ", "stan", "udzial_mieszkalny", "gestosc", "pewnosc"],
     "additionalProperties": False,
 }
 
@@ -69,18 +70,33 @@ def system_swiadka():
         "Zwróć:\n"
         "- uzasadnienie: najwyżej trzy zdania: co widać na zdjęciach (np. witryny i szyldy, balkony, wielkość i rytm okien, "
         "liczba wejść) i skąd biorą się mnożniki,\n"
+        "- widac_mieszkania: true, gdy na zdjęciach widać ślady, że ktoś tu mieszka: balkony z rzeczami (rośliny, suszarki "
+        "z praniem, rowery, meble, skrzynki), różne zasłony, firanki i rolety w wielu oknach, kwiaty w oknach, anteny "
+        "satelitarne na balkonach i ścianach; false, gdy takich śladów nie widać albo zdjęcia tego nie rozstrzygają "
+        "(jednakowe okna bez balkonów, jak w biurze, szkole czy hotelu). Budynek niemieszkalny w rekordzie dostanie "
+        "mieszkańców tylko przy true i pewności co najmniej " + f"{PROG_PEWNOSCI:g}".replace(".", ",") + ",\n"
         "- typ: jeden z kodów poniżej; wybiera klasę wzoru,\n"
         "- stan: uzytkowany, w_budowie albo pustostan,\n"
         "- udzial_mieszkalny: jaka część budynku to mieszkania w porównaniu z typowym budynkiem tej klasy, od 0 do 1. "
-        "1 to typowo, także gdy w parterze są zwykłe sklepy albo lokale usługowe, bo stała już je obejmuje. Mniej, gdy "
-        "usługi zajmują więcej, np. biura na piętrach, albo gdy mieszkania są tylko częścią budynku usługowego. 0, gdy nikt "
-        "tu nie mieszka,\n"
+        "1 to typowo, także gdy w parterze są zwykłe sklepy albo lokale usługowe, bo stała już je obejmuje. Obniżaj tylko "
+        "wtedy, gdy całe piętra powyżej parteru wyglądają na niemieszkalne (np. biura, szyldy i witryny na piętrach); "
+        "reklamy, banery i murale na ścianie nie są powodem. 0, gdy nikt tu nie mieszka,\n"
         f"- gestosc: ile razy gęściej albo rzadziej niż w typowym budynku tej klasy mieszkają tu ludzie, od {GESTOSC[0]} do "
-        f"{GESTOSC[1]:.0f}. 1 to typowo. Więcej niż 1: bardzo małe mieszkania (mikrokawalerki, pokoje na wynajem, hotel "
-        "pracowniczy), gęsto zasiedlony blok. Mniej niż 1: duże mieszkania (apartamentowiec, kamienica z dużymi "
+        f"{GESTOSC[1]:.0f}. 1 to typowo. Więcej niż 1: bardzo małe mieszkania (mikrokawalerki, hotel pracowniczy), "
+        "gęsto zasiedlony blok. Mniej niż 1: duże mieszkania (apartamentowiec, kamienica z dużymi "
         "mieszkaniami), budynek częściowo pusty, mała wspólnota w dużym budynku (np. dom parafialny, klasztor). Dom z dwoma "
         "mieszkaniami to 2,\n"
         "- pewnosc: od 0 do 1.\n\n"
+        "Co wiadomo o gęstości w polskich miastach:\n"
+        "- gęściej niż typowo bywa w budynkach z mikroapartamentami i kawalerkami po 11-25 m² (budowane głównie w latach "
+        "2010-2024 jako inwestycyjne, także w dawnych hotelach, biurowcach i akademikach), w prywatnych akademikach i w "
+        "hotelach pracowniczych z pokojami wieloosobowymi; z zewnątrz: bardzo gęsty rytm jednakowych małych okien, przy "
+        "każdym oknie balkon francuski albo mały balkon, wiele jednostek klimatyzacji, długie korytarze lub galerie,\n"
+        "- rzadziej niż typowo bywa w kamienicach i apartamentowcach z dużymi mieszkaniami (wysokie, szerokie okna, mało "
+        "okien na piętro), w budynkach częściowo pustych (zabite lub zamurowane okna, brak zasłon na całych piętrach) i "
+        "tam, gdzie mała wspólnota zajmuje duży budynek (dom parafialny, klasztor),\n"
+        "- wynajmu pokoi studentom w zwykłych kamienicach i blokach z zewnątrz nie widać, więc tego nie zgaduj.\n"
+        "Gęstość podwyższasz i obniżasz na tych samych zasadach: tylko wtedy, gdy na zdjęciach widać taki powód.\n\n"
         "Gdy nie widzisz konkretnego powodu, wpisz 1 w obu mnożnikach. Każdą wartość inną niż 1 uzasadnij tym, co widać. "
         "Porównuj ten budynek z typowym budynkiem tej klasy w polskim mieście.\n\n"
         "Typy:\n" + "\n".join(f"- {kod}: {opis}" for kod, opis in TYPY.items()))

@@ -81,3 +81,16 @@ Wnioski autorów:
 Czego nie wiemy bez pełnego tekstu: rok danych populacyjnych, użyte klasy BDOT10k, skąd pochodzi „prawda" dla siatki 1 km (to kluczowe dla oceny błędu 19,2%), liczba komórek, wyniki wszystkich 19 wariantów, ograniczenia.
 
 ---
+
+---
+
+## Gdzie mieszka się gęściej albo rzadziej: wiedza w prompcie świadka
+
+Gęstość od świadka (1 to typowy budynek klasy) ma podstawę tylko wtedy, gdy powód widać z powietrza. Prompt podaje mu cechy z polskich realiów:
+
+- **Mikroapartamenty i kawalerki 11–25 m².** Od 2018 r. mieszkanie musi mieć co najmniej 25 m², więc deweloperzy sprzedawali mniejsze jednostki jako lokale użytkowe, „inwestycyjne”, aparthotele i prywatne akademiki; ograniczenie objęło lokale użytkowe w 2024 r., a w hotelach i aparthotelach mniejsze jednostki są nadal dozwolone ([rp.pl](https://www.rp.pl/nieruchomosci-mieszkaniowe/art40101161-nadchodzi-zmierzch-mikrokawalerek-rzad-walczy-z-patodeweloperka), [portal.faktura.pl](https://portal.faktura.pl/biznes/biznes-pod-lupa/koniec-z-patodeweloperka-mimo-popytu-na-mikrokawalerki/), [muratorplus.pl](https://www.muratorplus.pl/inwestycje/inwestycje-mieszkaniowe/koniec-patodeweloperki-i-mikroapartamentow-nadchodza-ogromne-zmiany-w-przepisach-o-budowie-blokow-aa-qZv3-rjPU-Wac9.html)). Takie budynki bywają w BDOT10k hotelem albo usługami. Przykład z naszych arkuszy: Starter przy wybrzeżu Pasteura 18, dawny Hotel Asystenta UWr, ma 149 kawalerek po 11–27 m² ([starter.net.pl](https://www.starter.net.pl/), [polska-org.pl](https://polska-org.pl/549170,Wroclaw,Starter_dawny_Hotel_Asystenta.html)).
+- **Prywatne akademiki.** We Wrocławiu ok. 9, np. Student Depot przy Robotniczej 96 (494 miejsca w studiach jednoosobowych) ([gazetaprawna.pl](https://www.gazetaprawna.pl/biznes/nieruchomosci/artykuly/10941733,brakuje-miejsc-w-akademikach-czy-prywatne-placowki-rozwiaza-problem.html), [studentdepot.pl](https://studentdepot.pl/pl/akademiki), [wroclaw.pl](https://www.wroclaw.pl/przedsiebiorczy-wroclaw/akademiki-domy-studenckie-wroclaw-publiczne-prywatne-adresy)).
+- **Hotele pracownicze i kwatery.** Pokoje wieloosobowe i mieszkania na 4–15 osób, np. 55 m² na 8 osób ([kwaterydlafirm.pl](https://kwaterydlafirm.pl/mieszkania-dla-pracownikow-wroclaw/), [hotel-pracowniczy.pl](https://www.hotel-pracowniczy.pl/wroc%C5%82aw/)).
+- **Wynajem pokoi studentom.** Przy pl. Grunwaldzkim całe kamienice bywają podzielone na pokoje po 8–12 m² ([nieruchomosci-online.pl](https://wroclaw.nieruchomosci-online.pl/pokoje,plac-grunwaldzki/), [gethome.pl](https://gethome.pl/mieszkania/do-wynajecia/wroclaw/)). Z zewnątrz tego nie widać, więc świadek ma tego nie zgadywać; jeśli taki efekt jest, pokaże się w rozjazdach z SRLM w rejonach przy uczelniach.
+
+Mikroapartamenty w budynkach z funkcją hotelu i prywatne akademiki z powietrza wyglądają jak hotele, więc rozpoznaje je szperacz, który sprawdza wszystkie budynki hotelowe z BDOT10k.

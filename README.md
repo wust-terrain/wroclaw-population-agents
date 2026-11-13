@@ -12,6 +12,7 @@ Przebieg testowy to 3 arkusze ortofotomapy wokół pl. Grunwaldzkiego (680 budyn
 | `docs/architektura.md` | agenci, pętla, dane w kodzie, gdzie co jest w `src/` |
 | `docs/rubryka.md` | skąd są stałe rubryki (Pirowski i Bartos 2018) |
 | `docs/serwer.md` | przebieg na całym mieście na serwerze z GPU |
+| `docs/odkrycia.md` | dziennik odkryć i problemów po drodze, ze zdjęciami (materiał na artykuł blogowy) |
 | `src/agenci/`, `src/ortofoto/` | kod i pełne prompty |
 | `eksperymenty/*.toml` | konfiguracje przebiegów |
 | `paper/` | artykuł na kurs (ACL) |
@@ -66,7 +67,7 @@ Zdjęcia mają współrzędne, więc obrys z BDOT10k da się na nie nałożyć. 
 
 ## Jeden budynek od początku do końca
 
-Prawdziwy przebieg `arkusze_haiku` (Claude Haiku) dla akademika przy Piastowskiej 1. Świadek widzi typowy akademik i zostawia oba mnożniki na 1, więc wzór daje 378 osób. Spis ma w tym kwadracie 33 osoby, kwadrat dostaje flagę, a agent bilansujący uznaje nadwyżkę za spodziewaną (studenci bez meldunku) i o budynek nie pyta. Szperacz znajduje na stronie uczelni 802 miejsca dla obu segmentów akademika, z których ten dostaje 674 według powierzchni brutto.
+Prawdziwy przebieg `arkusze_haiku` (Claude Haiku) dla akademika przy Piastowskiej 1. Świadek widzi typowy akademik i zostawia oba mnożniki na 1, więc wzór daje 378 osób. Spis ma w tym kwadracie 33 osoby, kwadrat dostaje flagę, a agent bilansujący przypisuje nadwyżkę stałej dla zamieszkania zbiorowego i o budynek nie pyta. Szperacz znajduje na stronie uczelni 802 miejsca dla obu segmentów akademika, z których ten dostaje 674 według powierzchni brutto.
 
 ![Schemat blokowy jednego budynku, od rekordu BDOT10k do wyniku](docs/przyklad_budynku.png)
 
@@ -98,13 +99,16 @@ Dla akademików polskiego źródła nie znaleźliśmy; liczba pochodzi z ankiety
 | Pole | Co znaczy | Jak wchodzi do wzoru |
 | --- | --- | --- |
 | `uzasadnienie` | co widać na zdjęciach (witryny, balkony, okna, wejścia) i skąd mnożniki | nie wchodzi |
+| `widac_mieszkania` | czy widać ślady, że ktoś tu mieszka: balkony z rzeczami, pranie, różne zasłony i rolety, kwiaty, anteny satelitarne | budynek niemieszkalny w BDOT10k dostaje mieszkańców tylko przy `true` i pewności od 0,6 |
 | `typ` | kamienica, blok PRL, blok nowy, dom, szeregowiec, zbiorowy, usługi, przemysł, garaż, inny | wybiera klasę rubryki; usługi, przemysł i garaż dają 0 |
 | `stan` | użytkowany, w budowie, pustostan | inny niż użytkowany daje 0 |
 | `udzial_mieszkalny` | jaka część budynku to mieszkania w porównaniu z typowym budynkiem tej klasy, od 0 do 1 | mnoży wynik |
 | `gestosc` | ile razy gęściej albo rzadziej niż typowo mieszkają tu ludzie, od 0,3 do 3 | mnoży wynik |
-| `pewnosc` | od 0 do 1 | czyta tylko agent bilansujący |
+| `pewnosc` | od 0 do 1 | próg dla budynków niemieszkalnych w BDOT10k; czyta ją też agent bilansujący |
 
-Udział mówi, gdzie są mieszkania: zwykły sklep w parterze to wciąż udział 1, bo stała już go obejmuje; mniej daje się, gdy usługi zajmują więcej, np. biura na piętrach. Gęstość mówi, jak gęsto mieszkają ludzie: więcej niż 1 przy mikrokawalerkach, pokojach na wynajem czy hotelu pracowniczym, mniej przy dużych mieszkaniach, częściowo pustym budynku albo małej wspólnocie w dużym budynku (dom parafialny, klasztor). Dom z dwoma mieszkaniami ma gęstość 2. Gdy obraz wyraźnie przeczy rekordowi, świadek wybiera inny typ i tym samym inną klasę rubryki. Kondygnacje bierzemy tylko z BDOT10k, bo mają je wszystkie budynki mieszkalne.
+Udział mówi, gdzie są mieszkania: zwykły sklep w parterze to wciąż udział 1, bo stała już go obejmuje; obniża się go tylko wtedy, gdy całe piętra powyżej parteru wyglądają na niemieszkalne, a reklamy, banery i murale nie są powodem. Gęstość mówi, jak gęsto mieszkają ludzie: więcej niż 1 przy mikrokawalerkach, pokojach na wynajem czy hotelu pracowniczym, mniej przy dużych mieszkaniach, częściowo pustym budynku albo małej wspólnocie w dużym budynku (dom parafialny, klasztor). Dom z dwoma mieszkaniami ma gęstość 2. Prompt podaje świadkowi, gdzie w polskich miastach mieszka się gęściej (mikroapartamenty i kawalerki po 11–25 m², prywatne akademiki, hotele pracownicze) i rzadziej (duże mieszkania w kamienicach, pustostany), z cechami widocznymi z zewnątrz; źródła w `docs/rubryka.md`. Wynajmu pokoi studentom w zwykłych kamienicach z powietrza nie widać i świadek ma tego nie zgadywać.
+
+Przy budynku, który BDOT10k uznaje za niemieszkalny (uczelnia, biuro, hotel), świadek przy niepewnym obrazie skłania się do połowicznych odpowiedzi („kamienica, udział 0,5”). Dlatego taki budynek dostaje mieszkańców tylko wtedy, gdy świadek widzi ślady mieszkań i jest ich pewny co najmniej w 0,6 (`PROG_PEWNOSCI` w `estymatory.py`, do ustawienia po testach). Gdy obraz wyraźnie przeczy rekordowi, świadek wybiera inny typ i tym samym inną klasę rubryki. Kondygnacje bierzemy tylko z BDOT10k, bo mają je wszystkie budynki mieszkalne.
 
 ## Wysokość i dach na zdjęciu
 
@@ -120,9 +124,9 @@ Agent nie widzi zdjęć. Czyta opisy budynków z takich kwadratów, stawia diagn
 
 ## Szperacz
 
-Większość ludzi siedzi w kilku dużych budynkach. Przy `szukaj = true` model z wyszukiwarką internetową dostaje adresy i rekord najwyżej 4 budynków z każdego arkusza: najpierw zamieszkania zbiorowego, potem tych z największym szacunkiem. Szuka liczby miejsc albo mieszkań podanej dla tego konkretnego budynku, najwyżej 2 zapytaniami. Liczba miejsc zastępuje szacunek, a liczbę mieszkań mnożymy przez 1,71 osoby (GUS, Wrocław, 2024). Bez źródła zostaje wynik wzoru (`mieszkancy_wzor`); stronę i zdanie z liczbą zapisujemy w `zrodlo` i `cytat`, a trafienia trzeba przejrzeć.
+Większość ludzi siedzi w kilku dużych budynkach. Przy `szukaj = true` model z wyszukiwarką internetową dostaje adresy i rekord wszystkich akademików, internatów i budynków hotelowych z BDOT10k, a do tego najwyżej 4 innych budynków z każdego arkusza: najpierw zamieszkania zbiorowego, potem tych z największym szacunkiem. Hotele sprawdzamy, bo pod tą funkcją bywają prywatne akademiki i mikroapartamenty na wynajem długoterminowy: na przykład Starter przy wybrzeżu Pasteura 18 (dawny Hotel Asystenta UWr) ma 149 kawalerek po 11–27 m², a w BDOT10k jest hotelem. Zwykły hotel dla turystów szperacz zgłasza jako brak, a kawalerkę liczy jako jedno miejsce. Szuka liczby miejsc albo mieszkań podanej dla tego konkretnego budynku, najwyżej 2 zapytaniami. Liczba miejsc zastępuje szacunek, a liczbę mieszkań mnożymy przez 1,71 osoby (GUS, Wrocław, 2024). Bez źródła zostaje wynik wzoru (`mieszkancy_wzor`); stronę i zdanie z liczbą zapisujemy w `zrodlo` i `cytat`, a trafienia trzeba przejrzeć.
 
-Ewidencja dzieli jeden budynek zamieszkania zbiorowego, np. akademik, na kilka segmentów, a liczba miejsc w sieci dotyczy całości. Stykające się segmenty takiego budynku z tą samą funkcją w BDOT10k szukamy więc razem, a znalezioną liczbę dzielimy między nie według powierzchni brutto. Takie grupowanie łączy też osobne akademiki spięte łącznikiem (np. przy pl. Grunwaldzkim 26 i 28); szperacz dostaje wtedy kilka adresów i zwykle nie podaje jednej liczby.
+Ewidencja dzieli jeden budynek zamieszkania zbiorowego, np. akademik, na kilka segmentów, a liczba miejsc w sieci dotyczy całości. Stykające się segmenty z tą samą funkcją w BDOT10k szukamy więc razem, a znalezioną liczbę dzielimy między nie według powierzchni brutto. Gdy grupa obejmuje kilka akademików spiętych łącznikami (jak przy pl. Grunwaldzkim 26 i 28 i Grunwaldzkiej 59), szperacz podaje sumę ich miejsc, ale tylko gdy znajdzie liczbę dla każdego z nich. Grupy bez własnego punktu adresowego nie szukamy, bo dostałaby adres sąsiada i policzyła jego miejsca drugi raz. Gdy szperacz nic nie znajdzie, zostaje wynik wzoru.
 
 ## Co sprawdzamy
 

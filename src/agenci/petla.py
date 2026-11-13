@@ -22,7 +22,7 @@ from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import pandas as pd
 
-from agenci.estymatory import M2_NA_OSOBE, OSOBY_NA_DOM, klasa, ze_wzoru
+from agenci.estymatory import M2_NA_OSOBE, OSOBY_NA_DOM, ze_wzoru
 from agenci.karta import zbuduj_karte
 from agenci.llm import ROWNOLEGLE, tekst
 from agenci.statystyka import budynki_w_kwadratach, kompletne_kwadraty, sumy, udzialy
@@ -100,17 +100,14 @@ def bilans(mieszkancy, u, ludnosc):
 
 
 def sprzeczny(obs, karta):
-    """Czy świadek i BDOT10k różnią się co do tego, że ktoś w budynku mieszka. Typ inny z mieszkaniami niczego nie rozstrzyga."""
-    if obs["typ"] == "inny" and obs["udzial_mieszkalny"] > 0:
-        return False
-    wg_swiadka = obs["stan"] == "uzytkowany" and obs["udzial_mieszkalny"] > 0 and klasa(obs["typ"]) is not None
-    return wg_swiadka != karta.zamieszkany_bdot
+    """Czy świadek i BDOT10k różnią się co do tego, że ktoś w budynku mieszka: wzór daje mieszkańców, a rekord nie, albo odwrotnie."""
+    return (ze_wzoru(obs, karta) > 0) != karta.zamieszkany_bdot
 
 
 def _opis_budynku(budynek, obs, karta, szacunek):
     kondygnacje = f", {karta.kondygnacje:.0f} kond." if karta.kondygnacje else ""
     rekord = f"BDOT10k: {karta.funkcja}{kondygnacje}, {karta.kategoria}, {karta.pow_zabudowy_m2:.0f} m²"
-    return (f"- {budynek}: {rekord}; świadek: {obs['typ']}, {obs['stan']}, udział mieszkalny {obs['udzial_mieszkalny']:.2f}, "
+    return (f"- {budynek}: {rekord}; świadek: {obs['typ']}, {obs['stan']}, ślady mieszkań {'tak' if obs['widac_mieszkania'] else 'nie'}, udział mieszkalny {obs['udzial_mieszkalny']:.2f}, "
             f"gęstość {obs['gestosc']:.2f}, pewność {obs['pewnosc']:.2f} ({obs['uzasadnienie']}); "
             f"szacunek {szacunek:.0f} os.")
 

@@ -21,6 +21,7 @@ M2_NA_OSOBE = {  # powierzchnia zabudowy × kondygnacje na osobę
     "wielorodzinny": 37.08,  # jak wyżej
     "zbiorowy": 31.0,  # College Planning & Management 2014, tab. 1: mediana 333,3 stopy² na miejsce w akademiku
 }
+PROG_PEWNOSCI = 0.6  # budynek niemieszkalny w BDOT10k dostaje mieszkańców tylko przy widac_mieszkania i takiej pewności; na start, do testów
 OSOBY_NA_MIESZKANIE = 1.71  # GUS, Wrocław, koniec 2024 (polskawliczbach.pl); mnoży liczbę mieszkań znalezioną przez szperacza
 DOMY = {"dom_jednorodzinny", "szeregowiec"}
 WIELORODZINNE = {"kamienica", "blok_prl", "blok_nowy"}
@@ -67,9 +68,12 @@ def ze_wzoru(obs, karta):
     """Liczba mieszkańców z obserwacji świadka i rubryki.
 
     Typ "inny" znaczy też, że świadek nie umie określić typu (np. nie ma zdjęć), więc gdy rekord mówi o budynku mieszkalnym
-    i eksploatowanym, klasę bierzemy z rekordu.
+    i eksploatowanym, klasę bierzemy z rekordu. Budynek niemieszkalny w rekordzie dostaje mieszkańców tylko wtedy, gdy świadek
+    widzi ślady mieszkań i jest ich dość pewny: przy niepewnym obrazie świadek skłania się do połowicznych odpowiedzi.
     """
     if obs["stan"] != "uzytkowany":
+        return 0.0
+    if not karta.mieszkalny_bdot and not (obs["widac_mieszkania"] and obs["pewnosc"] >= PROG_PEWNOSCI):
         return 0.0
     k = klasa_bdot(karta.funkcja) if obs["typ"] == "inny" and karta.zamieszkany_bdot else klasa(obs["typ"])
     return _rubryka(k, karta) * obs["udzial_mieszkalny"] * obs["gestosc"]
